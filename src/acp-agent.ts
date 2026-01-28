@@ -71,12 +71,20 @@ export interface Logger {
   error: (...args: any[]) => void;
 }
 
+type AccumulatedUsage = {
+  inputTokens: number;
+  outputTokens: number;
+  cachedReadTokens: number;
+  cachedWriteTokens: number;
+};
+
 type Session = {
   query: Query;
   input: Pushable<SDKUserMessage>;
   cancelled: boolean;
   permissionMode: PermissionMode;
   settingsManager: SettingsManager;
+  accumulatedUsage: AccumulatedUsage;
 };
 
 type BackgroundTerminal =
@@ -255,6 +263,12 @@ export class ClaudeAcpAgent implements Agent {
     }
 
     this.sessions[params.sessionId].cancelled = false;
+    this.sessions[params.sessionId].accumulatedUsage = {
+      inputTokens: 0,
+      outputTokens: 0,
+      cachedReadTokens: 0,
+      cachedWriteTokens: 0,
+    };
 
     const { query, input } = this.sessions[params.sessionId];
 
@@ -291,6 +305,51 @@ export class ClaudeAcpAgent implements Agent {
             return { stopReason: "cancelled" };
           }
 
+          // Accumulate usage from this result
+          const session = this.sessions[params.sessionId];
+          session.accumulatedUsage.inputTokens += message.usage.input_tokens;
+          session.accumulatedUsage.outputTokens += message.usage.output_tokens;
+          session.accumulatedUsage.cachedReadTokens += message.usage.cache_read_input_tokens;
+          session.accumulatedUsage.cachedWriteTokens += message.usage.cache_creation_input_tokens;
+
+          // Calculate context window size from modelUsage (minimum across all models used)
+          const contextWindows = Object.values(message.modelUsage).map((m) => m.contextWindow);
+          const contextWindowSize =
+            contextWindows.length > 0 ? Math.min(...contextWindows) : 200000;
+
+          // Send usage_update notification
+          const totalUsedTokens =
+            message.usage.input_tokens +
+            message.usage.output_tokens +
+            message.usage.cache_read_input_tokens +
+            message.usage.cache_creation_input_tokens;
+
+          await this.client.sessionUpdate({
+            sessionId: params.sessionId,
+            update: {
+              sessionUpdate: "usage_update",
+              used: totalUsedTokens,
+              size: contextWindowSize,
+              cost: {
+                amount: message.total_cost_usd,
+                currency: "USD",
+              },
+            },
+          });
+
+          // Build the usage response
+          const buildUsageResponse = (): PromptResponse["usage"] => ({
+            inputTokens: session.accumulatedUsage.inputTokens,
+            outputTokens: session.accumulatedUsage.outputTokens,
+            cachedReadTokens: session.accumulatedUsage.cachedReadTokens,
+            cachedWriteTokens: session.accumulatedUsage.cachedWriteTokens,
+            totalTokens:
+              session.accumulatedUsage.inputTokens +
+              session.accumulatedUsage.outputTokens +
+              session.accumulatedUsage.cachedReadTokens +
+              session.accumulatedUsage.cachedWriteTokens,
+          });
+
           switch (message.subtype) {
             case "success": {
               if (message.result.includes("Please run /login")) {
@@ -299,7 +358,7 @@ export class ClaudeAcpAgent implements Agent {
               if (message.is_error) {
                 throw RequestError.internalError(undefined, message.result);
               }
-              return { stopReason: "end_turn" };
+              return { stopReason: "end_turn", usage: buildUsageResponse() };
             }
             case "error_during_execution":
               if (message.is_error) {
@@ -308,7 +367,7 @@ export class ClaudeAcpAgent implements Agent {
                   message.errors.join(", ") || message.subtype,
                 );
               }
-              return { stopReason: "end_turn" };
+              return { stopReason: "end_turn", usage: buildUsageResponse() };
             case "error_max_budget_usd":
             case "error_max_turns":
             case "error_max_structured_output_retries":
@@ -318,7 +377,7 @@ export class ClaudeAcpAgent implements Agent {
                   message.errors.join(", ") || message.subtype,
                 );
               }
-              return { stopReason: "max_turn_requests" };
+              return { stopReason: "max_turn_requests", usage: buildUsageResponse() };
             default:
               unreachable(message, this.logger);
               break;
@@ -342,6 +401,8 @@ export class ClaudeAcpAgent implements Agent {
           if (this.sessions[params.sessionId].cancelled) {
             break;
           }
+
+          console.error("eyooooo", JSON.stringify(message));
 
           // Slash commands like /compact can generate invalid output... doesn't match
           // their own docs: https://docs.anthropic.com/en/docs/claude-code/sdk/sdk-slash-commands#%2Fcompact-compact-conversation-history
@@ -682,7 +743,10 @@ export class ClaudeAcpAgent implements Agent {
     const options: Options = {
       systemPrompt,
       settingSources: ["user", "project", "local"],
-      stderr: (err) => this.logger.error(err),
+      stderr: (err) => {
+        console.error("eyo something from claude", err);
+        this.logger.error(err)
+      },
       ...(maxThinkingTokens !== undefined && { maxThinkingTokens }),
       ...userProvidedOptions,
       // Override certain fields that must be controlled by ACP
@@ -792,6 +856,12 @@ export class ClaudeAcpAgent implements Agent {
       cancelled: false,
       permissionMode,
       settingsManager,
+      accumulatedUsage: {
+        inputTokens: 0,
+        outputTokens: 0,
+        cachedReadTokens: 0,
+        cachedWriteTokens: 0,
+      },
     };
 
     const availableCommands = await getAvailableSlashCommands(q);
