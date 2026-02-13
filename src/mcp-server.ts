@@ -1,21 +1,8 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import {
-  BashInput,
-  FileEditInput,
-  FileReadInput,
-  FileWriteInput,
-  TaskOutputInput,
-} from "@anthropic-ai/claude-agent-sdk/sdk-tools.js";
+import { BashInput, TaskOutputInput } from "@anthropic-ai/claude-agent-sdk/sdk-tools.js";
 import { z } from "zod";
-import { CLAUDE_CONFIG_DIR, ClaudeAcpAgent } from "./acp-agent.js";
-import {
-  ClientCapabilities,
-  ReadTextFileResponse,
-  TerminalOutputResponse,
-} from "@agentclientprotocol/sdk";
-import * as diff from "diff";
-import * as path from "node:path";
-import * as fs from "node:fs/promises";
+import { ClaudeAcpAgent } from "./acp-agent.js";
+import { TerminalOutputResponse } from "@agentclientprotocol/sdk";
 
 import { sleep, unreachable } from "./utils.js";
 import { acpToolNames } from "./tools.js";
@@ -35,169 +22,14 @@ function formatErrorMessage(error: unknown): string {
 }
 
 const unqualifiedToolNames = {
-  edit: "Edit",
   bash: "Bash",
   killShell: "KillShell",
   bashOutput: "BashOutput",
 };
 
-export function createMcpServer(
-  agent: ClaudeAcpAgent,
-  sessionId: string,
-  clientCapabilities: ClientCapabilities | undefined,
-): McpServer {
-  /**
-   * This checks if a given path is related to internal agent persistence and if the agent should be allowed to read/write from here.
-   * We let the agent do normal fs operations on these paths so that it can persist its state.
-   * However, we block access to settings files for security reasons.
-   */
-  function internalPath(file_path: string) {
-    return (
-      file_path.startsWith(CLAUDE_CONFIG_DIR) &&
-      !file_path.startsWith(path.join(CLAUDE_CONFIG_DIR, "settings.json")) &&
-      !file_path.startsWith(path.join(CLAUDE_CONFIG_DIR, "session-env"))
-    );
-  }
-
-  async function readTextFile(input: FileReadInput): Promise<ReadTextFileResponse> {
-    if (internalPath(input.file_path)) {
-      const content = await fs.readFile(input.file_path, "utf8");
-
-      // eslint-disable-next-line eqeqeq
-      if (input.offset != null || input.limit != null) {
-        const lines = content.split("\n");
-
-        // Apply offset and limit if provided
-        const offset = input.offset ?? 1;
-        const limit = input.limit ?? lines.length;
-
-        // Extract the requested lines (offset is 1-based)
-        const startIndex = Math.max(0, offset - 1);
-        const endIndex = Math.min(lines.length, startIndex + limit);
-        const selectedLines = lines.slice(startIndex, endIndex);
-
-        return { content: selectedLines.join("\n") };
-      } else {
-        return { content };
-      }
-    }
-
-    return agent.readTextFile({
-      sessionId,
-      path: input.file_path,
-      line: input.offset,
-      limit: input.limit,
-    });
-  }
-
-  async function writeTextFile(input: FileWriteInput): Promise<void> {
-    if (internalPath(input.file_path)) {
-      await fs.writeFile(input.file_path, input.content, "utf8");
-    } else {
-      await agent.writeTextFile({
-        sessionId,
-        path: input.file_path,
-        content: input.content,
-      });
-    }
-  }
-
+export function createMcpServer(agent: ClaudeAcpAgent, sessionId: string): McpServer {
   // Create MCP server
   const server = new McpServer({ name: "acp", version: "1.0.0" }, { capabilities: { tools: {} } });
-
-  if (clientCapabilities?.fs?.writeTextFile) {
-    server.registerTool(
-      unqualifiedToolNames.edit,
-      {
-        title: unqualifiedToolNames.edit,
-        description: `Performs exact string replacements in files.
-
-In sessions with ${acpToolNames.edit} always use it instead of Edit as it will
-allow the user to conveniently review changes.
-
-Usage:
-- You must use your \`Read\` tool at least once in the conversation before editing. This tool will error if you attempt an edit without reading the file.
-- When editing text from Read tool output, ensure you preserve the exact indentation (tabs/spaces) as it appears.
-- ALWAYS prefer editing existing files in the codebase. NEVER write new files unless explicitly required.
-- Only use emojis if the user explicitly requests it. Avoid adding emojis to files unless asked.
-- The edit will FAIL if \`old_string\` is not unique in the file. Either provide a larger string with more surrounding context to make it unique or use \`replace_all\` to change every instance of \`old_string\`.
-- Use \`replace_all\` for replacing and renaming strings across the file. This parameter is useful if you want to rename a variable for instance.`,
-        inputSchema: {
-          file_path: z.string().describe("The absolute path to the file to modify"),
-          old_string: z.string().describe("The text to replace"),
-          new_string: z
-            .string()
-            .describe("The text to replace it with (must be different from old_string)"),
-          replace_all: z
-            .boolean()
-            .default(false)
-            .optional()
-            .describe("Replace all occurrences of old_string (default false)"),
-        },
-        annotations: {
-          title: "Edit file",
-          readOnlyHint: false,
-          destructiveHint: false,
-          openWorldHint: false,
-          idempotentHint: false,
-        },
-      },
-      async (input: FileEditInput) => {
-        try {
-          const session = agent.sessions[sessionId];
-          if (!session) {
-            return {
-              content: [
-                {
-                  type: "text",
-                  text: "The user has left the building",
-                },
-              ],
-            };
-          }
-
-          const readResponse = await readTextFile({
-            file_path: input.file_path,
-          });
-
-          if (typeof readResponse?.content !== "string") {
-            throw new Error(`No file contents for ${input.file_path}.`);
-          }
-
-          const { newContent } = replaceAndCalculateLocation(readResponse.content, [
-            {
-              oldText: input.old_string,
-              newText: input.new_string,
-              replaceAll: input.replace_all,
-            },
-          ]);
-
-          const patch = diff.createPatch(input.file_path, readResponse.content, newContent);
-
-          await writeTextFile({ file_path: input.file_path, content: newContent });
-
-          return {
-            content: [
-              {
-                type: "text",
-                text: patch,
-              },
-            ],
-          };
-        } catch (error) {
-          return {
-            isError: true,
-            content: [
-              {
-                type: "text",
-                text: "Editing file failed: " + formatErrorMessage(error),
-              },
-            ],
-          };
-        }
-      },
-    );
-  }
 
   if (agent.clientCapabilities?.terminal) {
     server.registerTool(

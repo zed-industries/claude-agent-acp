@@ -40,7 +40,6 @@ import {
 } from "@anthropic-ai/sdk/resources/beta.mjs";
 
 const acpUnqualifiedToolNames = {
-  edit: "Edit",
   bash: "Bash",
   killShell: "KillShell",
   bashOutput: "BashOutput",
@@ -48,13 +47,10 @@ const acpUnqualifiedToolNames = {
 
 export const ACP_TOOL_NAME_PREFIX = "mcp__acp__";
 export const acpToolNames = {
-  edit: ACP_TOOL_NAME_PREFIX + acpUnqualifiedToolNames.edit,
   bash: ACP_TOOL_NAME_PREFIX + acpUnqualifiedToolNames.bash,
   killShell: ACP_TOOL_NAME_PREFIX + acpUnqualifiedToolNames.killShell,
   bashOutput: ACP_TOOL_NAME_PREFIX + acpUnqualifiedToolNames.bashOutput,
 };
-
-export const EDIT_TOOL_NAMES = [acpToolNames.edit];
 
 /**
  * Union of all possible content types that can appear in tool results from the Anthropic SDK.
@@ -82,7 +78,11 @@ type ToolResultContent =
 import { HookCallback } from "@anthropic-ai/claude-agent-sdk";
 import { Logger } from "./acp-agent.js";
 import { SettingsManager } from "./settings.js";
-import { FileReadInput, FileWriteInput } from "@anthropic-ai/claude-agent-sdk/sdk-tools.js";
+import {
+  FileEditInput,
+  FileReadInput,
+  FileWriteInput,
+} from "@anthropic-ai/claude-agent-sdk/sdk-tools.js";
 
 interface ToolInfo {
   title: string;
@@ -204,8 +204,8 @@ export function toolInfoFromToolUse(toolUse: any): ToolInfo {
         locations: [],
       };
 
-    case acpToolNames.edit:
     case "Edit": {
+      const input = toolUse.input as FileEditInput;
       const path = input?.file_path ?? input?.file_path;
 
       return {
@@ -472,7 +472,7 @@ export function toolUpdateFromToolResult(
       }
       return {};
 
-    case acpToolNames.edit: {
+    case "Edit": {
       const content: ToolCallContent[] = [];
       const locations: ToolCallLocation[] = [];
 
@@ -521,8 +521,6 @@ export function toolUpdateFromToolResult(
     }
 
     case acpToolNames.bash:
-    case "edit":
-    case "Edit":
     case "Write": {
       return {};
     }

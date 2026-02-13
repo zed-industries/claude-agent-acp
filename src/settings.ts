@@ -69,7 +69,6 @@ function containsShellOperator(str: string): boolean {
  * "Edit rules apply to all built-in tools that edit files."
  * This means an Edit(...) rule should match Write, MultiEdit, etc.
  */
-const FILE_EDITING_TOOLS = [acpToolNames.edit];
 
 /**
  * Functions to extract the relevant argument from tool input for permission matching
@@ -146,9 +145,7 @@ function matchesRule(rule: ParsedRule, toolName: string, toolInput: unknown, cwd
   // - "Edit rules apply to all built-in tools that edit files."
   // - "Claude will make a best-effort attempt to apply Read rules to all built-in tools
   //    that read files like Grep, Glob, and LS."
-  const ruleAppliesToTool =
-    (rule.toolName === "Bash" && toolName === acpToolNames.bash) ||
-    (rule.toolName === "Edit" && FILE_EDITING_TOOLS.includes(toolName));
+  const ruleAppliesToTool = rule.toolName === "Bash" && toolName === acpToolNames.bash;
 
   if (!ruleAppliesToTool) {
     return false;

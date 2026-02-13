@@ -682,7 +682,7 @@ describe("tool conversions", () => {
     const toolUse = {
       type: "tool_use",
       id: "toolu_01MNO345",
-      name: "mcp__acp__Edit",
+      name: "Edit",
       input: {
         file_path: "/Users/test/project/test.txt",
         old_string: "old",
@@ -712,7 +712,7 @@ describe("tool conversions", () => {
     const toolUse = {
       type: "tool_use",
       id: "toolu_01MNO345",
-      name: "mcp__acp__Edit",
+      name: "Edit",
       input: {
         file_path: "/Users/test/project/test.txt",
         old_string: "old",
