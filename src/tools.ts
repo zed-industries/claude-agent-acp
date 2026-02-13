@@ -39,19 +39,6 @@ import {
   BetaImageBlockParam,
 } from "@anthropic-ai/sdk/resources/beta.mjs";
 
-const acpUnqualifiedToolNames = {
-  bash: "Bash",
-  killShell: "KillShell",
-  bashOutput: "BashOutput",
-};
-
-export const ACP_TOOL_NAME_PREFIX = "mcp__acp__";
-export const acpToolNames = {
-  bash: ACP_TOOL_NAME_PREFIX + acpUnqualifiedToolNames.bash,
-  killShell: ACP_TOOL_NAME_PREFIX + acpUnqualifiedToolNames.killShell,
-  bashOutput: ACP_TOOL_NAME_PREFIX + acpUnqualifiedToolNames.bashOutput,
-};
-
 /**
  * Union of all possible content types that can appear in tool results from the Anthropic SDK.
  * These are transformed to valid ACP ContentBlock types by toValidAcpContent().
@@ -77,8 +64,8 @@ type ToolResultContent =
   | BetaTextEditorCodeExecutionToolResultError;
 import { HookCallback } from "@anthropic-ai/claude-agent-sdk";
 import { Logger } from "./acp-agent.js";
-import { SettingsManager } from "./settings.js";
 import {
+  BashInput,
   FileEditInput,
   FileReadInput,
   FileWriteInput,
@@ -141,8 +128,8 @@ export function toolInfoFromToolUse(toolUse: any): ToolInfo {
         locations: input?.notebook_path ? [{ path: input.notebook_path }] : [],
       };
 
-    case "Bash":
-    case acpToolNames.bash:
+    case "Bash": {
+      const input = toolUse.input as BashInput;
       return {
         title: input?.command ? "`" + input.command.replaceAll("`", "\\`") + "`" : "Terminal",
         kind: "execute",
@@ -156,22 +143,7 @@ export function toolInfoFromToolUse(toolUse: any): ToolInfo {
               ]
             : [],
       };
-
-    case "BashOutput":
-    case acpToolNames.bashOutput:
-      return {
-        title: "Tail Logs",
-        kind: "execute",
-        content: [],
-      };
-
-    case "KillShell":
-    case acpToolNames.killShell:
-      return {
-        title: "Kill Process",
-        kind: "execute",
-        content: [],
-      };
+    }
 
     case "Read": {
       const input = toolUse.input as FileReadInput;
@@ -520,7 +492,6 @@ export function toolUpdateFromToolResult(
       return result;
     }
 
-    case acpToolNames.bash:
     case "Write": {
       return {};
     }
@@ -736,55 +707,4 @@ export const createPostToolUseHook =
       }
     }
     return { continue: true };
-  };
-
-/**
- * Creates a PreToolUse hook that checks permissions using the SettingsManager.
- * This runs before the SDK's built-in permission rules, allowing us to enforce
- * our own permission settings for ACP-prefixed tools.
- */
-export const createPreToolUseHook =
-  (settingsManager: SettingsManager, logger: Logger = console): HookCallback =>
-  async (input: any, _toolUseID: string | undefined) => {
-    if (input.hook_event_name !== "PreToolUse") {
-      return { continue: true };
-    }
-
-    const toolName = input.tool_name;
-    const toolInput = input.tool_input;
-
-    const permissionCheck = settingsManager.checkPermission(toolName, toolInput);
-
-    if (permissionCheck.decision !== "ask") {
-      logger.log(
-        `[PreToolUseHook] Tool: ${toolName}, Decision: ${permissionCheck.decision}, Rule: ${permissionCheck.rule}`,
-      );
-    }
-
-    switch (permissionCheck.decision) {
-      case "allow":
-        return {
-          continue: true,
-          hookSpecificOutput: {
-            hookEventName: "PreToolUse" as const,
-            permissionDecision: "allow" as const,
-            permissionDecisionReason: `Allowed by settings rule: ${permissionCheck.rule}`,
-          },
-        };
-
-      case "deny":
-        return {
-          continue: true,
-          hookSpecificOutput: {
-            hookEventName: "PreToolUse" as const,
-            permissionDecision: "deny" as const,
-            permissionDecisionReason: `Denied by settings rule: ${permissionCheck.rule}`,
-          },
-        };
-
-      case "ask":
-      default:
-        // Let the normal permission flow continue
-        return { continue: true };
-    }
   };

@@ -500,23 +500,6 @@ describe("tool conversions", () => {
     });
   });
 
-  it("should handle KillBash entries", () => {
-    const tool_use = {
-      type: "tool_use",
-      id: "toolu_01PhLms5fuvmdjy2bb6dfUKT",
-      name: "KillShell",
-      input: {
-        shell_id: "bash_1",
-      },
-    };
-
-    expect(toolInfoFromToolUse(tool_use)).toStrictEqual({
-      kind: "execute",
-      title: `Kill Process`,
-      content: [],
-    });
-  });
-
   it("should handle BashOutput entries", () => {
     const tool_use = {
       type: "tool_use",
