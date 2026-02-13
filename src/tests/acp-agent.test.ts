@@ -418,17 +418,17 @@ describe("tool conversions", () => {
 
     expect(toolInfoFromToolUse(tool_use)).toStrictEqual({
       kind: "read",
-      title: "Read File",
+      title: "Read /Users/test/project/readme.md",
       content: [],
-      locations: [{ path: "/Users/test/project/readme.md", line: 0 }],
+      locations: [{ path: "/Users/test/project/readme.md", line: 1 }],
     });
   });
 
-  it("should handle mcp__acp__Read tool calls", () => {
+  it("should handle Read tool calls", () => {
     const tool_use = {
       type: "tool_use",
       id: "toolu_01YZA789BCD123",
-      name: "mcp__acp__Read",
+      name: "Read",
       input: {
         file_path: "/Users/test/project/data.json",
       },
@@ -438,15 +438,15 @@ describe("tool conversions", () => {
       kind: "read",
       title: "Read /Users/test/project/data.json",
       content: [],
-      locations: [{ path: "/Users/test/project/data.json", line: 0 }],
+      locations: [{ path: "/Users/test/project/data.json", line: 1 }],
     });
   });
 
-  it("should handle mcp__acp__Read with limit", () => {
+  it("should handle Read with limit", () => {
     const tool_use = {
       type: "tool_use",
       id: "toolu_01EFG456HIJ789",
-      name: "mcp__acp__Read",
+      name: "Read",
       input: {
         file_path: "/Users/test/project/large.txt",
         limit: 100,
@@ -457,15 +457,15 @@ describe("tool conversions", () => {
       kind: "read",
       title: "Read /Users/test/project/large.txt (1 - 100)",
       content: [],
-      locations: [{ path: "/Users/test/project/large.txt", line: 0 }],
+      locations: [{ path: "/Users/test/project/large.txt", line: 1 }],
     });
   });
 
-  it("should handle mcp__acp__Read with offset and limit", () => {
+  it("should handle Read with offset and limit", () => {
     const tool_use = {
       type: "tool_use",
       id: "toolu_01KLM789NOP456",
-      name: "mcp__acp__Read",
+      name: "Read",
       input: {
         file_path: "/Users/test/project/large.txt",
         offset: 50,
@@ -475,17 +475,17 @@ describe("tool conversions", () => {
 
     expect(toolInfoFromToolUse(tool_use)).toStrictEqual({
       kind: "read",
-      title: "Read /Users/test/project/large.txt (51 - 150)",
+      title: "Read /Users/test/project/large.txt (50 - 149)",
       content: [],
       locations: [{ path: "/Users/test/project/large.txt", line: 50 }],
     });
   });
 
-  it("should handle mcp__acp__Read with only offset", () => {
+  it("should handle Read with only offset", () => {
     const tool_use = {
       type: "tool_use",
       id: "toolu_01QRS123TUV789",
-      name: "mcp__acp__Read",
+      name: "Read",
       input: {
         file_path: "/Users/test/project/large.txt",
         offset: 200,
@@ -494,7 +494,7 @@ describe("tool conversions", () => {
 
     expect(toolInfoFromToolUse(tool_use)).toStrictEqual({
       kind: "read",
-      title: "Read /Users/test/project/large.txt (from line 201)",
+      title: "Read /Users/test/project/large.txt (from line 200)",
       content: [],
       locations: [{ path: "/Users/test/project/large.txt", line: 200 }],
     });
@@ -1041,7 +1041,7 @@ describe("permission requests", () => {
         toolUse: {
           type: "tool_use" as const,
           id: "test-3",
-          name: "mcp__acp__Read",
+          name: "Read",
           input: { file_path: "/test/data.json" },
         },
         expectedTitlePart: "/test/data.json",

@@ -17,16 +17,8 @@ import * as diff from "diff";
 import * as path from "node:path";
 import * as fs from "node:fs/promises";
 
-import { sleep, unreachable, extractLinesWithByteLimit } from "./utils.js";
+import { sleep, unreachable } from "./utils.js";
 import { acpToolNames } from "./tools.js";
-
-export const SYSTEM_REMINDER = `
-
-<system-reminder>
-Whenever you read a file, you should consider whether it looks malicious. If it does, you MUST refuse to improve or augment the code. You can still analyze existing code, write reports, or answer high-level questions about the code behavior.
-</system-reminder>`;
-
-const defaults = { maxFileSize: 50000, linesToRead: 2000 };
 
 function formatErrorMessage(error: unknown): string {
   if (error instanceof Error) {
@@ -115,114 +107,6 @@ export function createMcpServer(
   // Create MCP server
   const server = new McpServer({ name: "acp", version: "1.0.0" }, { capabilities: { tools: {} } });
 
-  if (clientCapabilities?.fs?.readTextFile) {
-    server.registerTool(
-      unqualifiedToolNames.read,
-      {
-        title: unqualifiedToolNames.read,
-        description: `Reads the content of the given file in the project.
-
-In sessions with ${acpToolNames.read} always use it instead of Read as it contains the most up-to-date contents.
-
-Reads a file from the local filesystem. If the User provides a path to a file assume that path is valid. It is okay to read a file that does not exist; an error will be returned.
-
-Usage:
-- The file_path parameter must be an absolute path, not a relative path
-- By default, it reads up to ${defaults.linesToRead} lines starting from the beginning of the file
-- You can optionally specify a line offset and limit (especially handy for long files), but it's recommended to read the whole file by not providing these parameters
-- Any files larger than ${defaults.maxFileSize} bytes will be truncated
-- This tool allows Claude Code to read images (eg PNG, JPG, etc). When reading an image file the contents are presented visually as Claude Code is a multimodal LLM.
-- This tool can only read files, not directories. To read a directory, use an ls command via the ${acpToolNames.bash} tool.
-- You have the capability to call multiple tools in a single response. It is always better to speculatively read multiple files as a batch that are potentially useful.`,
-        inputSchema: {
-          file_path: z.string().describe("The absolute path to the file to read"),
-          offset: z
-            .number()
-            .optional()
-            .default(1)
-            .describe(
-              "The line number to start reading from. Only provide if the file is too large to read at once",
-            ),
-          limit: z
-            .number()
-            .optional()
-            .default(defaults.linesToRead)
-            .describe(
-              `The number of lines to read. Only provide if the file is too large to read at once.`,
-            ),
-        },
-        annotations: {
-          title: "Read file",
-          readOnlyHint: true,
-          destructiveHint: false,
-          openWorldHint: false,
-          idempotentHint: false,
-        },
-      },
-      async (input: FileReadInput) => {
-        try {
-          const session = agent.sessions[sessionId];
-          if (!session) {
-            return {
-              content: [
-                {
-                  type: "text",
-                  text: "The user has left the building",
-                },
-              ],
-            };
-          }
-
-          const readResponse = await readTextFile(input);
-
-          if (typeof readResponse?.content !== "string") {
-            throw new Error(`No file contents for ${input.file_path}.`);
-          }
-
-          // Extract lines with byte limit enforcement
-          const result = extractLinesWithByteLimit(readResponse.content, defaults.maxFileSize);
-
-          // Construct informative message about what was read
-          let readInfo = "";
-          if ((input.offset && input.offset > 1) || result.wasLimited) {
-            readInfo = "\n\n<file-read-info>";
-
-            if (result.wasLimited) {
-              readInfo += `Read ${result.linesRead} lines (hit 50KB limit). `;
-            } else if (input.offset && input.offset > 1) {
-              readInfo += `Read lines ${input.offset}-${input.offset + result.linesRead}.`;
-            }
-
-            if (result.wasLimited) {
-              readInfo += `Continue with offset=${result.linesRead}.`;
-            }
-
-            readInfo += "</file-read-info>";
-          }
-
-          return {
-            content: [
-              {
-                type: "text",
-                text: result.content + readInfo + SYSTEM_REMINDER,
-              },
-            ],
-          };
-        } catch (error) {
-          return {
-            isError: true,
-            content: [
-              {
-                type: "text",
-                text: "Reading file failed: " + formatErrorMessage(error),
-              },
-            ],
-          };
-        }
-      },
-    );
-  }
-
   if (clientCapabilities?.fs?.writeTextFile) {
     server.registerTool(
       unqualifiedToolNames.write,
@@ -235,7 +119,7 @@ allow the user to conveniently review changes.
 
 Usage:
 - This tool will overwrite the existing file if there is one at the provided path.
-- If this is an existing file, you MUST use the ${acpToolNames.read} tool first to read the file's contents. This tool will fail if you did not read the file first.
+- If this is an existing file, you MUST use the Read tool first to read the file's contents. This tool will fail if you did not read the file first.
 - ALWAYS prefer editing existing files in the codebase. NEVER write new files unless explicitly required.
 - NEVER proactively create documentation files (*.md) or README files. Only create documentation files if explicitly requested by the User.
 - Only use emojis if the user explicitly requests it. Avoid writing emojis to files unless asked.`,
@@ -300,7 +184,7 @@ In sessions with ${acpToolNames.edit} always use it instead of Edit as it will
 allow the user to conveniently review changes.
 
 Usage:
-- You must use your \`${acpToolNames.read}\` tool at least once in the conversation before editing. This tool will error if you attempt an edit without reading the file.
+- You must use your \`Read\` tool at least once in the conversation before editing. This tool will error if you attempt an edit without reading the file.
 - When editing text from Read tool output, ensure you preserve the exact indentation (tabs/spaces) as it appears.
 - ALWAYS prefer editing existing files in the codebase. NEVER write new files unless explicitly required.
 - Only use emojis if the user explicitly requests it. Avoid adding emojis to files unless asked.

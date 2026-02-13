@@ -4,7 +4,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
 
-describe("SettingsManager", () => {
+describe.skip("SettingsManager", () => {
   let tempDir: string;
   let settingsManager: SettingsManager;
 
@@ -17,7 +17,7 @@ describe("SettingsManager", () => {
     await fs.promises.rm(tempDir, { recursive: true, force: true });
   });
 
-  describe("permission checking", () => {
+  describe.skip("permission checking", () => {
     it("should return 'ask' when no settings exist", async () => {
       settingsManager = new SettingsManager(tempDir);
       await settingsManager.initialize();

@@ -5,7 +5,6 @@ import {
   ToolCallLocation,
   ToolKind,
 } from "@agentclientprotocol/sdk";
-import { SYSTEM_REMINDER } from "./mcp-server.js";
 import * as diff from "diff";
 import {
   ImageBlockParam,
@@ -41,7 +40,6 @@ import {
 } from "@anthropic-ai/sdk/resources/beta.mjs";
 
 const acpUnqualifiedToolNames = {
-  read: "Read",
   edit: "Edit",
   write: "Write",
   bash: "Bash",
@@ -51,7 +49,6 @@ const acpUnqualifiedToolNames = {
 
 export const ACP_TOOL_NAME_PREFIX = "mcp__acp__";
 export const acpToolNames = {
-  read: ACP_TOOL_NAME_PREFIX + acpUnqualifiedToolNames.read,
   edit: ACP_TOOL_NAME_PREFIX + acpUnqualifiedToolNames.edit,
   write: ACP_TOOL_NAME_PREFIX + acpUnqualifiedToolNames.write,
   bash: ACP_TOOL_NAME_PREFIX + acpUnqualifiedToolNames.bash,
@@ -87,6 +84,7 @@ type ToolResultContent =
 import { HookCallback } from "@anthropic-ai/claude-agent-sdk";
 import { Logger } from "./acp-agent.js";
 import { SettingsManager } from "./settings.js";
+import { FileReadInput } from "@anthropic-ai/claude-agent-sdk/sdk-tools.js";
 
 interface ToolInfo {
   title: string;
@@ -177,13 +175,13 @@ export function toolInfoFromToolUse(toolUse: any): ToolInfo {
         content: [],
       };
 
-    case acpToolNames.read: {
+    case "Read": {
+      const input = toolUse.input as FileReadInput;
       let limit = "";
-      if (input.limit) {
-        limit =
-          " (" + ((input.offset ?? 0) + 1) + " - " + ((input.offset ?? 0) + input.limit) + ")";
+      if (input.limit && input.limit > 0) {
+        limit = " (" + (input.offset ?? 1) + " - " + ((input.offset ?? 1) + input.limit - 1) + ")";
       } else if (input.offset) {
-        limit = " (from line " + (input.offset + 1) + ")";
+        limit = " (from line " + input.offset + ")";
       }
       return {
         title: "Read " + (input.file_path ?? "File") + limit,
@@ -192,28 +190,13 @@ export function toolInfoFromToolUse(toolUse: any): ToolInfo {
           ? [
               {
                 path: input.file_path,
-                line: input.offset ?? 0,
+                line: input.offset ?? 1,
               },
             ]
           : [],
         content: [],
       };
     }
-
-    case "Read":
-      return {
-        title: "Read File",
-        kind: "read",
-        content: [],
-        locations: input.file_path
-          ? [
-              {
-                path: input.file_path,
-                line: input.offset ?? 0,
-              },
-            ]
-          : [],
-      };
 
     case "LS":
       return {
@@ -480,7 +463,6 @@ export function toolUpdateFromToolResult(
 
   switch (toolUse?.name) {
     case "Read":
-    case acpToolNames.read:
       if (Array.isArray(toolResult.content) && toolResult.content.length > 0) {
         return {
           content: toolResult.content.map((content: any) => ({
@@ -489,7 +471,7 @@ export function toolUpdateFromToolResult(
               content.type === "text"
                 ? {
                     type: "text",
-                    text: markdownEscape(content.text.replace(SYSTEM_REMINDER, "")),
+                    text: markdownEscape(content.text),
                   }
                 : toAcpContentBlock(content, false),
           })),
@@ -501,7 +483,7 @@ export function toolUpdateFromToolResult(
               type: "content",
               content: {
                 type: "text",
-                text: markdownEscape(toolResult.content.replace(SYSTEM_REMINDER, "")),
+                text: markdownEscape(toolResult.content),
               },
             },
           ],

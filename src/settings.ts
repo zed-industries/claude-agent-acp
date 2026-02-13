@@ -72,14 +72,6 @@ function containsShellOperator(str: string): boolean {
 const FILE_EDITING_TOOLS = [acpToolNames.edit, acpToolNames.write];
 
 /**
- * Tools that read files. Per Claude Code docs:
- * "Claude will make a best-effort attempt to apply Read rules to all built-in tools
- * that read files like Grep and Glob."
- * This means a Read(...) rule should match Grep, Glob, etc.
- */
-const FILE_READING_TOOLS = [acpToolNames.read];
-
-/**
  * Functions to extract the relevant argument from tool input for permission matching
  */
 const TOOL_ARG_ACCESSORS: Record<string, (input: unknown) => string | undefined> = {
@@ -157,8 +149,7 @@ function matchesRule(rule: ParsedRule, toolName: string, toolInput: unknown, cwd
   //    that read files like Grep, Glob, and LS."
   const ruleAppliesToTool =
     (rule.toolName === "Bash" && toolName === acpToolNames.bash) ||
-    (rule.toolName === "Edit" && FILE_EDITING_TOOLS.includes(toolName)) ||
-    (rule.toolName === "Read" && FILE_READING_TOOLS.includes(toolName));
+    (rule.toolName === "Edit" && FILE_EDITING_TOOLS.includes(toolName));
 
   if (!ruleAppliesToTool) {
     return false;
