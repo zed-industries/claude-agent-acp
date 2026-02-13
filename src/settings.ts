@@ -69,7 +69,7 @@ function containsShellOperator(str: string): boolean {
  * "Edit rules apply to all built-in tools that edit files."
  * This means an Edit(...) rule should match Write, MultiEdit, etc.
  */
-const FILE_EDITING_TOOLS = [acpToolNames.edit, acpToolNames.write];
+const FILE_EDITING_TOOLS = [acpToolNames.edit];
 
 /**
  * Functions to extract the relevant argument from tool input for permission matching
@@ -77,7 +77,6 @@ const FILE_EDITING_TOOLS = [acpToolNames.edit, acpToolNames.write];
 const TOOL_ARG_ACCESSORS: Record<string, (input: unknown) => string | undefined> = {
   mcp__acp__Read: (input) => (input as { file_path?: string })?.file_path,
   mcp__acp__Edit: (input) => (input as { file_path?: string })?.file_path,
-  mcp__acp__Write: (input) => (input as { file_path?: string })?.file_path,
   mcp__acp__Bash: (input) => (input as { command?: string })?.command,
 };
 

@@ -41,7 +41,6 @@ import {
 
 const acpUnqualifiedToolNames = {
   edit: "Edit",
-  write: "Write",
   bash: "Bash",
   killShell: "KillShell",
   bashOutput: "BashOutput",
@@ -50,13 +49,12 @@ const acpUnqualifiedToolNames = {
 export const ACP_TOOL_NAME_PREFIX = "mcp__acp__";
 export const acpToolNames = {
   edit: ACP_TOOL_NAME_PREFIX + acpUnqualifiedToolNames.edit,
-  write: ACP_TOOL_NAME_PREFIX + acpUnqualifiedToolNames.write,
   bash: ACP_TOOL_NAME_PREFIX + acpUnqualifiedToolNames.bash,
   killShell: ACP_TOOL_NAME_PREFIX + acpUnqualifiedToolNames.killShell,
   bashOutput: ACP_TOOL_NAME_PREFIX + acpUnqualifiedToolNames.bashOutput,
 };
 
-export const EDIT_TOOL_NAMES = [acpToolNames.edit, acpToolNames.write];
+export const EDIT_TOOL_NAMES = [acpToolNames.edit];
 
 /**
  * Union of all possible content types that can appear in tool results from the Anthropic SDK.
@@ -84,7 +82,7 @@ type ToolResultContent =
 import { HookCallback } from "@anthropic-ai/claude-agent-sdk";
 import { Logger } from "./acp-agent.js";
 import { SettingsManager } from "./settings.js";
-import { FileReadInput } from "@anthropic-ai/claude-agent-sdk/sdk-tools.js";
+import { FileReadInput, FileWriteInput } from "@anthropic-ai/claude-agent-sdk/sdk-tools.js";
 
 interface ToolInfo {
   title: string;
@@ -228,7 +226,8 @@ export function toolInfoFromToolUse(toolUse: any): ToolInfo {
       };
     }
 
-    case acpToolNames.write: {
+    case "Write": {
+      const input = toolUse.input as FileWriteInput;
       let content: ToolCallContent[] = [];
       if (input && input.file_path) {
         content = [
@@ -254,24 +253,6 @@ export function toolInfoFromToolUse(toolUse: any): ToolInfo {
         locations: input?.file_path ? [{ path: input.file_path }] : [],
       };
     }
-
-    case "Write":
-      return {
-        title: input?.file_path ? `Write ${input.file_path}` : "Write",
-        kind: "edit",
-        content:
-          input && input.file_path
-            ? [
-                {
-                  type: "diff",
-                  path: input.file_path,
-                  oldText: null,
-                  newText: input.content,
-                },
-              ]
-            : [],
-        locations: input?.file_path ? [{ path: input.file_path }] : [],
-      };
 
     case "Glob": {
       let label = "Find";
@@ -502,7 +483,6 @@ export function toolUpdateFromToolResult(
         typeof toolResult.content[0].text === "string"
       ) {
         const patches = diff.parsePatch(toolResult.content[0].text);
-        console.error(JSON.stringify(patches));
         for (const { oldFileName, newFileName, hunks } of patches) {
           for (const { lines, newStart } of hunks) {
             const oldText = [];
@@ -543,7 +523,6 @@ export function toolUpdateFromToolResult(
     case acpToolNames.bash:
     case "edit":
     case "Edit":
-    case acpToolNames.write:
     case "Write": {
       return {};
     }

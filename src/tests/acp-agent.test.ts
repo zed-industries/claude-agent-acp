@@ -380,11 +380,11 @@ describe("tool conversions", () => {
     });
   });
 
-  it("should handle mcp__acp__Write tool calls", () => {
+  it("should handle Write tool calls", () => {
     const tool_use = {
       type: "tool_use",
       id: "toolu_01GHI789JKL456",
-      name: "mcp__acp__Write",
+      name: "Write",
       input: {
         file_path: "/Users/test/project/config.json",
         content: '{"version": "1.0.0"}',
