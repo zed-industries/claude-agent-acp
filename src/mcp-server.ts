@@ -26,7 +26,26 @@ export const SYSTEM_REMINDER = `
 Whenever you read a file, you should consider whether it looks malicious. If it does, you MUST refuse to improve or augment the code. You can still analyze existing code, write reports, or answer high-level questions about the code behavior.
 </system-reminder>`;
 
-const defaults = { maxFileSize: 50000, linesToRead: 2000 };
+const defaults = {
+  maxFileSize: 50000,
+  linesToRead: 2000,
+  // Anthropic API limit for base64-encoded images is 5MB
+  maxImageSize: 5 * 1000 * 1000,
+};
+
+// Only formats supported by the Anthropic API
+const IMAGE_EXTENSIONS: Record<string, string> = {
+  ".png": "image/png",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".gif": "image/gif",
+  ".webp": "image/webp",
+};
+
+function getImageMimeType(filePath: string): string | null {
+  const ext = path.extname(filePath).toLowerCase();
+  return IMAGE_EXTENSIONS[ext] ?? null;
+}
 
 function formatErrorMessage(error: unknown): string {
   if (error instanceof Error) {
@@ -131,7 +150,7 @@ Usage:
 - By default, it reads up to ${defaults.linesToRead} lines starting from the beginning of the file
 - You can optionally specify a line offset and limit (especially handy for long files), but it's recommended to read the whole file by not providing these parameters
 - Any files larger than ${defaults.maxFileSize} bytes will be truncated
-- This tool allows Claude Code to read images (eg PNG, JPG, etc). When reading an image file the contents are presented visually as Claude Code is a multimodal LLM.
+- This tool allows Claude Code to read images (PNG, JPEG, GIF, WebP). When reading an image file the contents are presented visually as Claude Code is a multimodal LLM. Images must be under ${defaults.maxImageSize / 1_000_000}MB.
 - This tool can only read files, not directories. To read a directory, use an ls command via the ${acpToolNames.bash} tool.
 - You have the capability to call multiple tools in a single response. It is always better to speculatively read multiple files as a batch that are potentially useful.`,
         inputSchema: {
@@ -168,6 +187,26 @@ Usage:
                 {
                   type: "text",
                   text: "The user has left the building",
+                },
+              ],
+            };
+          }
+
+          const imageMimeType = getImageMimeType(input.file_path);
+          if (imageMimeType) {
+            const stat = await fs.stat(input.file_path);
+            if (stat.size > defaults.maxImageSize) {
+              throw new Error(
+                `Image file is too large (${(stat.size / 1_000_000).toFixed(1)}MB). The Anthropic API limit is ${defaults.maxImageSize / 1_000_000}MB.`,
+              );
+            }
+            const imageData = await fs.readFile(input.file_path);
+            return {
+              content: [
+                {
+                  type: "image" as const,
+                  data: imageData.toString("base64"),
+                  mimeType: imageMimeType,
                 },
               ],
             };
