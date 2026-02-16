@@ -509,7 +509,7 @@ export function toolUpdateFromToolResult(
                   type: "content",
                   content: {
                     type: "text",
-                    text: `\`\`\`console\n${output.trimEnd()}\n\`\`\``,
+                    text: `\`\`\`sh\n${output.trimEnd()}\n\`\`\``,
                   },
                 },
               ]
@@ -538,7 +538,7 @@ export function toolUpdateFromToolResult(
               type: "content",
               content: {
                 type: "text",
-                text: `\`\`\`console\n${output.trimEnd()}\n\`\`\``,
+                text: `\`\`\`sh\n${output.trimEnd()}\n\`\`\``,
               },
             },
           ],

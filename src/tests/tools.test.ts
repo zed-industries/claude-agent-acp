@@ -451,7 +451,7 @@ describe("Bash terminal output", () => {
             type: "content",
             content: {
               type: "text",
-              text: "```console\nfile1.txt\nfile2.txt\n```",
+              text: "```sh\nfile1.txt\nfile2.txt\n```",
             },
           },
         ],
@@ -468,7 +468,7 @@ describe("Bash terminal output", () => {
           type: "content",
           content: {
             type: "text",
-            text: "```console\nfile1.txt\nfile2.txt\n```",
+            text: "```sh\nfile1.txt\nfile2.txt\n```",
           },
         },
       ]);
@@ -508,7 +508,7 @@ describe("Bash terminal output", () => {
           type: "content",
           content: {
             type: "text",
-            text: "```console\nsome error output\n```",
+            text: "```sh\nsome error output\n```",
           },
         },
       ]);
@@ -552,7 +552,7 @@ describe("Bash terminal output", () => {
           type: "content",
           content: {
             type: "text",
-            text: "```console\nhello\n```",
+            text: "```sh\nhello\n```",
           },
         },
       ]);
@@ -567,7 +567,7 @@ describe("Bash terminal output", () => {
           type: "content",
           content: {
             type: "text",
-            text: "```console\nhello\n```",
+            text: "```sh\nhello\n```",
           },
         },
       ]);
@@ -595,7 +595,7 @@ describe("Bash terminal output", () => {
               type: "content",
               content: {
                 type: "text",
-                text: "```console\nCargo.lock\nCargo.toml\nREADME.md\n```",
+                text: "```sh\nCargo.lock\nCargo.toml\nREADME.md\n```",
               },
             },
           ],
@@ -612,7 +612,7 @@ describe("Bash terminal output", () => {
             type: "content",
             content: {
               type: "text",
-              text: "```console\nCargo.lock\nCargo.toml\nREADME.md\n```",
+              text: "```sh\nCargo.lock\nCargo.toml\nREADME.md\n```",
             },
           },
         ]);
@@ -676,7 +676,7 @@ describe("Bash terminal output", () => {
               type: "content",
               content: {
                 type: "text",
-                text: "```console\nline1\nline2\n```",
+                text: "```sh\nline1\nline2\n```",
               },
             },
           ],
@@ -819,7 +819,7 @@ describe("Bash terminal output", () => {
           type: "content",
           content: {
             type: "text",
-            text: "```console\nfile1.txt\nfile2.txt\n```",
+            text: "```sh\nfile1.txt\nfile2.txt\n```",
           },
         },
       ];
