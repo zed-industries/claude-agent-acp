@@ -260,7 +260,7 @@ describe("tool conversions", () => {
 
     expect(toolInfoFromToolUse(tool_use)).toStrictEqual({
       kind: "execute",
-      title: "`rm README.md.rm`",
+      title: "rm README.md.rm",
       content: [
         {
           content: {
@@ -1058,7 +1058,7 @@ describe("permission requests", () => {
           name: "Bash",
           input: { command: "ls -la", description: "List files" },
         },
-        expectedTitlePart: "`ls -la`",
+        expectedTitlePart: "ls -la",
       },
       {
         toolUse: {

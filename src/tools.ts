@@ -131,7 +131,7 @@ export function toolInfoFromToolUse(
     case "Bash": {
       const input = toolUse.input as BashInput;
       return {
-        title: input?.command ? "`" + input.command.replaceAll("`", "\\`") + "`" : "Terminal",
+        title: input?.command ? input.command : "Terminal",
         kind: "execute",
         content: supportsTerminalOutput
           ? [{ type: "terminal" as const, terminalId: toolUse.id }]
