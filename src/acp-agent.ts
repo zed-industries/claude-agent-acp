@@ -218,7 +218,7 @@ export class ClaudeAcpAgent implements Agent {
       authMethod._meta = {
         "terminal-auth": {
           command: "node",
-          args: [cliPath, "/login"],
+          args: [cliPath],
           label: "Claude Code Login",
         },
       };
