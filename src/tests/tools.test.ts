@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { AgentSideConnection } from "@agentclientprotocol/sdk";
+import { AgentSideConnection, ClientCapabilities } from "@agentclientprotocol/sdk";
 import { ImageBlockParam, ToolResultBlockParam } from "@anthropic-ai/sdk/resources";
 import {
   BetaMCPToolResultBlock,
@@ -8,8 +8,10 @@ import {
   BetaWebSearchToolResultBlock,
   BetaBashCodeExecutionToolResultBlock,
   BetaBashCodeExecutionResultBlock,
+  BetaBashCodeExecutionToolResultBlockParam,
 } from "@anthropic-ai/sdk/resources/beta.mjs";
 import { toAcpNotifications, ToolUseCache, Logger } from "../acp-agent.js";
+import { toolUpdateFromToolResult, createPostToolUseHook } from "../tools.js";
 
 describe("rawOutput in tool call updates", () => {
   const mockClient = {} as AgentSideConnection;
@@ -407,6 +409,638 @@ describe("rawOutput in tool call updates", () => {
           content: { type: "image", data: "iVBORw0KGgo=", mimeType: "image/png" },
         },
       ],
+    });
+  });
+});
+
+describe("Bash terminal output", () => {
+  const mockClient = {} as AgentSideConnection;
+  const mockLogger: Logger = { log: () => {}, error: () => {} };
+
+  const bashToolUse = {
+    type: "tool_use",
+    id: "toolu_bash",
+    name: "Bash",
+    input: { command: "ls -la" },
+  };
+
+  const makeBashResult = (
+    stdout: string,
+    stderr: string,
+    return_code: number,
+  ): BetaBashCodeExecutionToolResultBlockParam => ({
+    type: "bash_code_execution_tool_result",
+    tool_use_id: "toolu_bash",
+    content: {
+      type: "bash_code_execution_result",
+      stdout,
+      stderr,
+      return_code,
+      content: [],
+    },
+  });
+
+  describe("toolUpdateFromToolResult", () => {
+    it("should return formatted content without _meta when supportsTerminalOutput is false", () => {
+      const toolResult = makeBashResult("file1.txt\nfile2.txt", "", 0);
+      const update = toolUpdateFromToolResult(toolResult, bashToolUse, false);
+
+      expect(update).toEqual({
+        content: [
+          {
+            type: "content",
+            content: {
+              type: "text",
+              text: "```sh\nfile1.txt\nfile2.txt\n```",
+            },
+          },
+        ],
+      });
+      expect(update._meta).toBeUndefined();
+    });
+
+    it("should return formatted content with _meta when supportsTerminalOutput is true", () => {
+      const toolResult = makeBashResult("file1.txt\nfile2.txt", "", 0);
+      const update = toolUpdateFromToolResult(toolResult, bashToolUse, true);
+
+      expect(update.content).toEqual([
+        {
+          type: "content",
+          content: {
+            type: "text",
+            text: "```sh\nfile1.txt\nfile2.txt\n```",
+          },
+        },
+      ]);
+      expect(update._meta).toEqual({
+        terminal_info: {
+          terminal_id: "toolu_bash",
+        },
+        terminal_output: {
+          terminal_id: "toolu_bash",
+          data: "file1.txt\nfile2.txt",
+        },
+        terminal_exit: {
+          terminal_id: "toolu_bash",
+          exit_code: 0,
+          signal: null,
+        },
+      });
+    });
+
+    it("should include exit_code from return_code in terminal_exit", () => {
+      const toolResult = makeBashResult("", "command not found", 127);
+      const update = toolUpdateFromToolResult(toolResult, bashToolUse, true);
+
+      expect(update._meta?.terminal_exit).toEqual({
+        terminal_id: "toolu_bash",
+        exit_code: 127,
+        signal: null,
+      });
+    });
+
+    it("should fall back to stderr when stdout is empty", () => {
+      const toolResult = makeBashResult("", "some error output", 1);
+      const update = toolUpdateFromToolResult(toolResult, bashToolUse, false);
+
+      expect(update.content).toEqual([
+        {
+          type: "content",
+          content: {
+            type: "text",
+            text: "```sh\nsome error output\n```",
+          },
+        },
+      ]);
+    });
+
+    it("should return empty content array with _meta when output is empty and supportsTerminalOutput is true", () => {
+      const toolResult = makeBashResult("", "", 0);
+      const update = toolUpdateFromToolResult(toolResult, bashToolUse, true);
+
+      expect(update.content).toEqual([]);
+      expect(update._meta).toEqual({
+        terminal_info: {
+          terminal_id: "toolu_bash",
+        },
+        terminal_output: {
+          terminal_id: "toolu_bash",
+          data: "",
+        },
+        terminal_exit: {
+          terminal_id: "toolu_bash",
+          exit_code: 0,
+          signal: null,
+        },
+      });
+    });
+
+    it("should return empty object when output is empty and supportsTerminalOutput is false", () => {
+      const toolResult = makeBashResult("", "", 0);
+      const update = toolUpdateFromToolResult(toolResult, bashToolUse, false);
+
+      expect(update).toEqual({});
+    });
+
+    it("should default supportsTerminalOutput to false when not provided", () => {
+      const toolResult = makeBashResult("hello", "", 0);
+      const update = toolUpdateFromToolResult(toolResult, bashToolUse);
+
+      expect(update._meta).toBeUndefined();
+      expect(update.content).toEqual([
+        {
+          type: "content",
+          content: {
+            type: "text",
+            text: "```sh\nhello\n```",
+          },
+        },
+      ]);
+    });
+
+    it("should trim trailing whitespace from output in content but preserve it in _meta data", () => {
+      const toolResult = makeBashResult("hello\n\n\n", "", 0);
+      const update = toolUpdateFromToolResult(toolResult, bashToolUse, true);
+
+      expect(update.content).toEqual([
+        {
+          type: "content",
+          content: {
+            type: "text",
+            text: "```sh\nhello\n```",
+          },
+        },
+      ]);
+      expect(update._meta?.terminal_output?.data).toBe("hello\n\n\n");
+    });
+
+    describe("with plain string tool_result (production format)", () => {
+      const makeStringBashResult = (
+        content: string,
+        is_error: boolean = false,
+      ): ToolResultBlockParam => ({
+        type: "tool_result",
+        tool_use_id: "toolu_bash",
+        content,
+        is_error,
+      });
+
+      it("should format string content as sh code block without _meta when supportsTerminalOutput is false", () => {
+        const toolResult = makeStringBashResult("Cargo.lock\nCargo.toml\nREADME.md");
+        const update = toolUpdateFromToolResult(toolResult, bashToolUse, false);
+
+        expect(update).toEqual({
+          content: [
+            {
+              type: "content",
+              content: {
+                type: "text",
+                text: "```sh\nCargo.lock\nCargo.toml\nREADME.md\n```",
+              },
+            },
+          ],
+        });
+        expect(update._meta).toBeUndefined();
+      });
+
+      it("should format string content with _meta when supportsTerminalOutput is true", () => {
+        const toolResult = makeStringBashResult("Cargo.lock\nCargo.toml\nREADME.md");
+        const update = toolUpdateFromToolResult(toolResult, bashToolUse, true);
+
+        expect(update.content).toEqual([
+          {
+            type: "content",
+            content: {
+              type: "text",
+              text: "```sh\nCargo.lock\nCargo.toml\nREADME.md\n```",
+            },
+          },
+        ]);
+        expect(update._meta).toEqual({
+          terminal_info: { terminal_id: "toolu_bash" },
+          terminal_output: { terminal_id: "toolu_bash", data: "Cargo.lock\nCargo.toml\nREADME.md" },
+          terminal_exit: { terminal_id: "toolu_bash", exit_code: 0, signal: null },
+        });
+      });
+
+      it("should use error handler when is_error is true (early return before Bash case)", () => {
+        const toolResult = makeStringBashResult("command not found: bad_cmd", true);
+        const update = toolUpdateFromToolResult(toolResult, bashToolUse, true);
+
+        // is_error with content hits the early error return at the top of
+        // toolUpdateFromToolResult, before reaching the Bash switch case.
+        // So there's no terminal _meta, just error-formatted content.
+        expect(update._meta).toBeUndefined();
+        expect(update.content).toEqual([
+          {
+            type: "content",
+            content: {
+              type: "text",
+              text: "```\ncommand not found: bad_cmd\n```",
+            },
+          },
+        ]);
+      });
+
+      it("should return empty object for empty string content without terminal support", () => {
+        const toolResult = makeStringBashResult("");
+        const update = toolUpdateFromToolResult(toolResult, bashToolUse, false);
+
+        expect(update).toEqual({});
+      });
+
+      it("should return empty content with _meta for empty string content with terminal support", () => {
+        const toolResult = makeStringBashResult("");
+        const update = toolUpdateFromToolResult(toolResult, bashToolUse, true);
+
+        expect(update.content).toEqual([]);
+        expect(update._meta).toEqual({
+          terminal_info: { terminal_id: "toolu_bash" },
+          terminal_output: { terminal_id: "toolu_bash", data: "" },
+          terminal_exit: { terminal_id: "toolu_bash", exit_code: 0, signal: null },
+        });
+      });
+
+      it("should handle array content with text blocks", () => {
+        const toolResult: ToolResultBlockParam = {
+          type: "tool_result",
+          tool_use_id: "toolu_bash",
+          content: [{ type: "text", text: "line1\nline2" }],
+          is_error: false,
+        };
+        const update = toolUpdateFromToolResult(toolResult, bashToolUse, false);
+
+        expect(update).toEqual({
+          content: [
+            {
+              type: "content",
+              content: {
+                type: "text",
+                text: "```sh\nline1\nline2\n```",
+              },
+            },
+          ],
+        });
+      });
+    });
+  });
+
+  describe("toAcpNotifications with clientCapabilities", () => {
+    const toolUseCache: ToolUseCache = {
+      toolu_bash: {
+        type: "tool_use",
+        id: "toolu_bash",
+        name: "Bash",
+        input: { command: "ls -la" },
+      },
+    };
+
+    const bashResult: BetaBashCodeExecutionResultBlock = {
+      type: "bash_code_execution_result",
+      stdout: "file1.txt\nfile2.txt",
+      stderr: "",
+      return_code: 0,
+      content: [],
+    };
+
+    const toolResult: BetaBashCodeExecutionToolResultBlock = {
+      type: "bash_code_execution_tool_result",
+      tool_use_id: "toolu_bash",
+      content: bashResult,
+    };
+
+    it("should include terminal _meta when client declares terminal_output support", () => {
+      const clientCapabilities: ClientCapabilities = {
+        _meta: { terminal_output: true },
+      };
+
+      const notifications = toAcpNotifications(
+        [toolResult],
+        "assistant",
+        "test-session",
+        toolUseCache,
+        mockClient,
+        mockLogger,
+        { clientCapabilities },
+      );
+
+      // Split into 2 notifications: terminal_output, then terminal_exit + completion
+      expect(notifications).toHaveLength(2);
+
+      // First notification: terminal_output only
+      const outputUpdate = notifications[0].update;
+      expect(outputUpdate).toMatchObject({
+        sessionUpdate: "tool_call_update",
+        toolCallId: "toolu_bash",
+      });
+      expect((outputUpdate as any)._meta).toEqual({
+        terminal_output: { terminal_id: "toolu_bash", data: "file1.txt\nfile2.txt" },
+      });
+      expect((outputUpdate as any).status).toBeUndefined();
+
+      // Second notification: terminal_exit + status + content
+      const exitUpdate = notifications[1].update;
+      expect(exitUpdate).toMatchObject({
+        sessionUpdate: "tool_call_update",
+        toolCallId: "toolu_bash",
+        status: "completed",
+      });
+      expect((exitUpdate as any)._meta).toMatchObject({
+        terminal_exit: { terminal_id: "toolu_bash", exit_code: 0, signal: null },
+      });
+      // terminal_info and terminal_output should NOT be on the exit notification
+      expect((exitUpdate as any)._meta).not.toHaveProperty("terminal_info");
+      expect((exitUpdate as any)._meta).not.toHaveProperty("terminal_output");
+    });
+
+    it("should not include terminal _meta when client does not declare terminal_output support", () => {
+      const notifications = toAcpNotifications(
+        [toolResult],
+        "assistant",
+        "test-session",
+        toolUseCache,
+        mockClient,
+        mockLogger,
+      );
+
+      expect(notifications).toHaveLength(1);
+      const update = notifications[0].update;
+      expect(update).toMatchObject({
+        sessionUpdate: "tool_call_update",
+        toolCallId: "toolu_bash",
+        status: "completed",
+      });
+      expect((update as any)._meta).not.toHaveProperty("terminal_info");
+      expect((update as any)._meta).not.toHaveProperty("terminal_output");
+      expect((update as any)._meta).not.toHaveProperty("terminal_exit");
+    });
+
+    it("should not include terminal _meta when _meta.terminal_output is false", () => {
+      const clientCapabilities: ClientCapabilities = {
+        _meta: { terminal_output: false },
+      };
+
+      const notifications = toAcpNotifications(
+        [toolResult],
+        "assistant",
+        "test-session",
+        toolUseCache,
+        mockClient,
+        mockLogger,
+        { clientCapabilities },
+      );
+
+      expect(notifications).toHaveLength(1);
+      expect((notifications[0].update as any)._meta).not.toHaveProperty("terminal_output");
+    });
+
+    it("should still include formatted content regardless of terminal_output support", () => {
+      const withSupport = toAcpNotifications(
+        [toolResult],
+        "assistant",
+        "test-session",
+        toolUseCache,
+        mockClient,
+        mockLogger,
+        { clientCapabilities: { _meta: { terminal_output: true } } },
+      );
+
+      const withoutSupport = toAcpNotifications(
+        [toolResult],
+        "assistant",
+        "test-session",
+        toolUseCache,
+        mockClient,
+        mockLogger,
+      );
+
+      const expectedContent = [
+        {
+          type: "content",
+          content: {
+            type: "text",
+            text: "```sh\nfile1.txt\nfile2.txt\n```",
+          },
+        },
+      ];
+
+      // With support: content is on the second (completion) notification
+      expect(withSupport).toHaveLength(2);
+      expect((withSupport[1].update as any).content).toEqual(expectedContent);
+      // Without support: content is on the only notification
+      expect((withoutSupport[0].update as any).content).toEqual(expectedContent);
+    });
+
+    it("should preserve claudeCode in _meta alongside terminal_exit on completion notification", () => {
+      const clientCapabilities: ClientCapabilities = {
+        _meta: { terminal_output: true },
+      };
+
+      const notifications = toAcpNotifications(
+        [toolResult],
+        "assistant",
+        "test-session",
+        toolUseCache,
+        mockClient,
+        mockLogger,
+        { clientCapabilities },
+      );
+
+      expect(notifications).toHaveLength(2);
+
+      // First notification (terminal_output) has no claudeCode
+      const outputMeta = (notifications[0].update as any)._meta;
+      expect(outputMeta.terminal_output).toBeDefined();
+      expect(outputMeta.claudeCode).toBeUndefined();
+
+      // Second notification (completion) has claudeCode + terminal_exit
+      const exitMeta = (notifications[1].update as any)._meta;
+      expect(exitMeta.claudeCode).toEqual({ toolName: "Bash" });
+      expect(exitMeta.terminal_exit).toBeDefined();
+    });
+  });
+
+  describe("post-tool-use hook preserves terminal _meta", () => {
+    it("should send terminal_output and terminal_exit as separate notifications, and hook should only have claudeCode", async () => {
+      const clientCapabilities: ClientCapabilities = {
+        _meta: { terminal_output: true },
+      };
+
+      const toolUseCache: ToolUseCache = {};
+
+      // Capture session updates sent by the hook callback
+      const hookUpdates: any[] = [];
+      const mockClientWithUpdate = {
+        sessionUpdate: async (notification: any) => {
+          hookUpdates.push(notification);
+        },
+      } as unknown as AgentSideConnection;
+
+      // Step 1: Process tool_use chunk — registers the PostToolUse hook callback
+      const toolUseChunk = {
+        type: "tool_use" as const,
+        id: "toolu_bash_hook",
+        name: "Bash",
+        input: { command: "ls -la" },
+      };
+      const toolUseNotifications = toAcpNotifications(
+        [toolUseChunk],
+        "assistant",
+        "test-session",
+        toolUseCache,
+        mockClientWithUpdate,
+        mockLogger,
+        { clientCapabilities },
+      );
+
+      // The initial tool_call should include terminal_info in _meta
+      expect(toolUseNotifications).toHaveLength(1);
+      expect((toolUseNotifications[0].update as any)._meta).toMatchObject({
+        terminal_info: { terminal_id: "toolu_bash_hook" },
+      });
+
+      // Step 2: Process bash result — produces separate terminal_output and terminal_exit notifications
+      const bashResult: BetaBashCodeExecutionResultBlock = {
+        type: "bash_code_execution_result",
+        stdout: "file1.txt",
+        stderr: "",
+        return_code: 0,
+        content: [],
+      };
+      const toolResult: BetaBashCodeExecutionToolResultBlock = {
+        type: "bash_code_execution_tool_result",
+        tool_use_id: "toolu_bash_hook",
+        content: bashResult,
+      };
+      const resultNotifications = toAcpNotifications(
+        [toolResult],
+        "assistant",
+        "test-session",
+        toolUseCache,
+        mockClientWithUpdate,
+        mockLogger,
+        { clientCapabilities },
+      );
+
+      // Should produce 2 notifications: terminal_output, then terminal_exit + completion
+      expect(resultNotifications).toHaveLength(2);
+
+      // First: terminal_output only
+      expect((resultNotifications[0].update as any)._meta).toEqual({
+        terminal_output: { terminal_id: "toolu_bash_hook", data: "file1.txt" },
+      });
+
+      // Second: terminal_exit + status
+      expect((resultNotifications[1].update as any)._meta).toMatchObject({
+        terminal_exit: { terminal_id: "toolu_bash_hook", exit_code: 0, signal: null },
+      });
+      expect((resultNotifications[1].update as any).status).toBe("completed");
+
+      // Step 3: Fire the PostToolUse hook (simulates what Claude Code SDK does)
+      const hook = createPostToolUseHook(mockLogger);
+      await hook(
+        {
+          hook_event_name: "PostToolUse",
+          tool_name: "Bash",
+          tool_input: { command: "ls -la" },
+          tool_response: "file1.txt",
+          tool_use_id: "toolu_bash_hook",
+          session_id: "test-session",
+          transcript_path: "/tmp/test",
+          cwd: "/tmp",
+        },
+        "toolu_bash_hook",
+        { signal: AbortSignal.abort() },
+      );
+
+      // Step 4: Hook update should only have claudeCode, no terminal fields
+      // (terminal events were already sent as separate notifications)
+      expect(hookUpdates).toHaveLength(1);
+      const hookMeta = hookUpdates[0].update._meta;
+      expect(hookMeta.claudeCode).toMatchObject({
+        toolName: "Bash",
+        toolResponse: "file1.txt",
+      });
+      expect(hookMeta.terminal_info).toBeUndefined();
+      expect(hookMeta.terminal_output).toBeUndefined();
+      expect(hookMeta.terminal_exit).toBeUndefined();
+    });
+
+    it("should not include terminal _meta in hook update when client lacks terminal_output support", async () => {
+      const toolUseCache: ToolUseCache = {};
+
+      const hookUpdates: any[] = [];
+      const mockClientWithUpdate = {
+        sessionUpdate: async (notification: any) => {
+          hookUpdates.push(notification);
+        },
+      } as unknown as AgentSideConnection;
+
+      // Process tool_use (registers hook)
+      toAcpNotifications(
+        [
+          {
+            type: "tool_use" as const,
+            id: "toolu_bash_no_term",
+            name: "Bash",
+            input: { command: "echo hi" },
+          },
+        ],
+        "assistant",
+        "test-session",
+        toolUseCache,
+        mockClientWithUpdate,
+        mockLogger,
+        // No clientCapabilities — terminal_output not supported
+      );
+
+      // Process bash result
+      const bashResult: BetaBashCodeExecutionResultBlock = {
+        type: "bash_code_execution_result",
+        stdout: "hi",
+        stderr: "",
+        return_code: 0,
+        content: [],
+      };
+      toAcpNotifications(
+        [
+          {
+            type: "bash_code_execution_tool_result",
+            tool_use_id: "toolu_bash_no_term",
+            content: bashResult,
+          } as BetaBashCodeExecutionToolResultBlock,
+        ],
+        "assistant",
+        "test-session",
+        toolUseCache,
+        mockClientWithUpdate,
+        mockLogger,
+      );
+
+      // Fire hook
+      const hook = createPostToolUseHook(mockLogger);
+      await hook(
+        {
+          hook_event_name: "PostToolUse",
+          tool_name: "Bash",
+          tool_input: { command: "echo hi" },
+          tool_response: "hi",
+          tool_use_id: "toolu_bash_no_term",
+          session_id: "test-session",
+          transcript_path: "/tmp/test",
+          cwd: "/tmp",
+        },
+        "toolu_bash_no_term",
+        { signal: AbortSignal.abort() },
+      );
+
+      // Hook update should only have claudeCode, no terminal fields
+      expect(hookUpdates).toHaveLength(1);
+      const hookMeta = hookUpdates[0].update._meta;
+      expect(hookMeta.claudeCode).toBeDefined();
+      expect(hookMeta.terminal_info).toBeUndefined();
+      expect(hookMeta.terminal_output).toBeUndefined();
+      expect(hookMeta.terminal_exit).toBeUndefined();
     });
   });
 });

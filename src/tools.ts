@@ -87,9 +87,26 @@ interface ToolUpdate {
   title?: string;
   content?: ToolCallContent[];
   locations?: ToolCallLocation[];
+  _meta?: {
+    terminal_info?: {
+      terminal_id: string;
+    };
+    terminal_output?: {
+      terminal_id: string;
+      data: string;
+    };
+    terminal_exit?: {
+      terminal_id: string;
+      exit_code: number;
+      signal: string | null;
+    };
+  };
 }
 
-export function toolInfoFromToolUse(toolUse: any): ToolInfo {
+export function toolInfoFromToolUse(
+  toolUse: any,
+  supportsTerminalOutput: boolean = false,
+): ToolInfo {
   const name = toolUse.name;
 
   switch (name) {
@@ -115,8 +132,9 @@ export function toolInfoFromToolUse(toolUse: any): ToolInfo {
       return {
         title: input?.command ? "`" + input.command.replaceAll("`", "\\`") + "`" : "Terminal",
         kind: "execute",
-        content:
-          input && input.description
+        content: supportsTerminalOutput
+          ? [{ type: "terminal" as const, terminalId: toolUse.id }]
+          : input && input.description
             ? [
                 {
                   type: "content",
@@ -361,6 +379,7 @@ export function toolUpdateFromToolResult(
     | BetaRequestMCPToolResultBlockParam
     | BetaToolSearchToolResultBlockParam,
   toolUse: any | undefined,
+  supportsTerminalOutput: boolean = false,
 ): ToolUpdate {
   if (
     "is_error" in toolResult &&
@@ -451,7 +470,80 @@ export function toolUpdateFromToolResult(
     }
 
     case "Bash": {
-      // todo!
+      const result = toolResult.content;
+      const terminalId = "tool_use_id" in toolResult ? String(toolResult.tool_use_id) : "";
+      const isError = "is_error" in toolResult && toolResult.is_error;
+
+      // Extract output and exit code from either format:
+      // 1. BetaBashCodeExecutionResultBlock: { type: "bash_code_execution_result", stdout, stderr, return_code }
+      // 2. Plain string content from a regular tool_result
+      // 3. Array content (e.g. [{ type: "text", text: "..." }])
+      let output = "";
+      let exitCode = isError ? 1 : 0;
+
+      if (
+        result &&
+        typeof result === "object" &&
+        "type" in result &&
+        result.type === "bash_code_execution_result"
+      ) {
+        const bashResult = result as BetaBashCodeExecutionResultBlock;
+        output = bashResult.stdout || bashResult.stderr || "";
+        exitCode = bashResult.return_code;
+      } else if (typeof result === "string") {
+        output = result;
+      } else if (
+        Array.isArray(result) &&
+        result.length > 0 &&
+        "text" in result[0] &&
+        typeof result[0].text === "string"
+      ) {
+        output = result.map((c: any) => c.text).join("\n");
+      }
+
+      if (supportsTerminalOutput) {
+        return {
+          content: output.trim()
+            ? [
+                {
+                  type: "content",
+                  content: {
+                    type: "text",
+                    text: `\`\`\`sh\n${output.trimEnd()}\n\`\`\``,
+                  },
+                },
+              ]
+            : [],
+          _meta: {
+            terminal_info: {
+              terminal_id: terminalId,
+            },
+            terminal_output: {
+              terminal_id: terminalId,
+              data: output,
+            },
+            terminal_exit: {
+              terminal_id: terminalId,
+              exit_code: exitCode,
+              signal: null,
+            },
+          },
+        };
+      }
+      // Fallback: format output as a code block without terminal _meta
+      if (output.trim()) {
+        return {
+          content: [
+            {
+              type: "content",
+              content: {
+                type: "text",
+                text: `\`\`\`sh\n${output.trimEnd()}\n\`\`\``,
+              },
+            },
+          ],
+        };
+      }
       return {};
     }
 
