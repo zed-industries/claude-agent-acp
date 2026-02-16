@@ -67,6 +67,7 @@ import { Logger } from "./acp-agent.js";
 import {
   AgentInput,
   BashInput,
+  FileEditInput,
   FileReadInput,
   FileWriteInput,
   GlobInput,
@@ -190,6 +191,27 @@ export function toolInfoFromToolUse(
       }
       return {
         title: input?.file_path ? `Write ${input.file_path}` : "Write",
+        kind: "edit",
+        content,
+        locations: input?.file_path ? [{ path: input.file_path }] : [],
+      };
+    }
+
+    case "Edit": {
+      const input = toolUse.input as FileEditInput;
+      let content: ToolCallContent[] = [];
+      if (input && input.file_path && (input.old_string || input.new_string)) {
+        content = [
+          {
+            type: "diff",
+            path: input.file_path,
+            oldText: input.old_string || null,
+            newText: input.new_string ?? "",
+          },
+        ];
+      }
+      return {
+        title: input?.file_path ? `Edit ${input.file_path}` : "Edit",
         kind: "edit",
         content,
         locations: input?.file_path ? [{ path: input.file_path }] : [],

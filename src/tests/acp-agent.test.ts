@@ -388,6 +388,81 @@ describe("tool conversions", () => {
     });
   });
 
+  it("should handle Edit tool calls", () => {
+    const tool_use = {
+      type: "tool_use",
+      id: "toolu_01EDIT123",
+      name: "Edit",
+      input: {
+        file_path: "/Users/test/project/test.txt",
+        old_string: "old text",
+        new_string: "new text",
+      },
+    };
+
+    expect(toolInfoFromToolUse(tool_use)).toStrictEqual({
+      kind: "edit",
+      title: "Edit /Users/test/project/test.txt",
+      content: [
+        {
+          type: "diff",
+          path: "/Users/test/project/test.txt",
+          oldText: "old text",
+          newText: "new text",
+        },
+      ],
+      locations: [{ path: "/Users/test/project/test.txt" }],
+    });
+  });
+
+  it("should handle Edit tool calls with replace_all", () => {
+    const tool_use = {
+      type: "tool_use",
+      id: "toolu_01EDIT456",
+      name: "Edit",
+      input: {
+        replace_all: false,
+        file_path: "/Users/benbrandt/github/codex-acp/src/thread.rs",
+        old_string:
+          "struct PromptState {\n    active_command: Option<ActiveCommand>,\n    active_web_search: Option<String>,\n}",
+        new_string:
+          "struct PromptState {\n    active_commands: HashMap<String, ActiveCommand>,\n    active_web_search: Option<String>,\n}",
+      },
+    };
+
+    expect(toolInfoFromToolUse(tool_use)).toStrictEqual({
+      kind: "edit",
+      title: "Edit /Users/benbrandt/github/codex-acp/src/thread.rs",
+      content: [
+        {
+          type: "diff",
+          path: "/Users/benbrandt/github/codex-acp/src/thread.rs",
+          oldText:
+            "struct PromptState {\n    active_command: Option<ActiveCommand>,\n    active_web_search: Option<String>,\n}",
+          newText:
+            "struct PromptState {\n    active_commands: HashMap<String, ActiveCommand>,\n    active_web_search: Option<String>,\n}",
+        },
+      ],
+      locations: [{ path: "/Users/benbrandt/github/codex-acp/src/thread.rs" }],
+    });
+  });
+
+  it("should handle Edit tool calls without file_path", () => {
+    const tool_use = {
+      type: "tool_use",
+      id: "toolu_01EDIT789",
+      name: "Edit",
+      input: {},
+    };
+
+    expect(toolInfoFromToolUse(tool_use)).toStrictEqual({
+      kind: "edit",
+      title: "Edit",
+      content: [],
+      locations: [],
+    });
+  });
+
   it("should handle Read tool calls", () => {
     const tool_use = {
       type: "tool_use",
