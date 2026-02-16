@@ -898,6 +898,7 @@ export class ClaudeAcpAgent implements Agent {
 
   canUseTool(sessionId: string): CanUseTool {
     return async (toolName, toolInput, { signal, suggestions, toolUseID }) => {
+      const supportsTerminalOutput = this.clientCapabilities?._meta?.["terminal_output"] === true;
       const session = this.sessions[sessionId];
       if (!session) {
         return {
@@ -922,7 +923,10 @@ export class ClaudeAcpAgent implements Agent {
           toolCall: {
             toolCallId: toolUseID,
             rawInput: toolInput,
-            title: toolInfoFromToolUse({ name: toolName, input: toolInput }).title,
+            ...toolInfoFromToolUse(
+              { name: toolName, input: toolInput, id: toolUseID },
+              supportsTerminalOutput,
+            ),
           },
         });
 
@@ -982,7 +986,10 @@ export class ClaudeAcpAgent implements Agent {
         toolCall: {
           toolCallId: toolUseID,
           rawInput: toolInput,
-          title: toolInfoFromToolUse({ name: toolName, input: toolInput }).title,
+          ...toolInfoFromToolUse(
+            { name: toolName, input: toolInput, id: toolUseID },
+            supportsTerminalOutput,
+          ),
         },
       });
       if (signal.aborted || response.outcome?.outcome === "cancelled") {

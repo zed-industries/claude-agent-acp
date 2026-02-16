@@ -1005,17 +1005,26 @@ describe("permission requests", () => {
       expect(toolInfo.title).toContain(testCase.expectedTitlePart);
 
       // Verify the structure that our fix creates for requestPermission
+      // We now spread the full toolInfo (title, kind, content, locations)
       const requestStructure = {
         toolCall: {
           toolCallId: testCase.toolUse.id,
           rawInput: testCase.toolUse.input,
-          title: toolInfo.title, // This is what commit 1785d86 adds
+          ...toolInfo,
         },
       };
 
       // Ensure the title field is present and populated
       expect(requestStructure.toolCall.title).toBeDefined();
       expect(requestStructure.toolCall.title).toContain(testCase.expectedTitlePart);
+
+      // Ensure kind is included so the client can render appropriate UI
+      expect(requestStructure.toolCall.kind).toBeDefined();
+      expect(typeof requestStructure.toolCall.kind).toBe("string");
+
+      // Ensure content is included so the client always has tool call details
+      expect(requestStructure.toolCall.content).toBeDefined();
+      expect(Array.isArray(requestStructure.toolCall.content)).toBe(true);
     }
   });
 });
