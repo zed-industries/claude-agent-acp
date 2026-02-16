@@ -65,10 +65,15 @@ type ToolResultContent =
 import { HookCallback } from "@anthropic-ai/claude-agent-sdk";
 import { Logger } from "./acp-agent.js";
 import {
+  AgentInput,
   BashInput,
-  FileEditInput,
   FileReadInput,
   FileWriteInput,
+  GlobInput,
+  GrepInput,
+  TodoWriteInput,
+  WebFetchInput,
+  WebSearchInput,
 } from "@anthropic-ai/claude-agent-sdk/sdk-tools.js";
 
 interface ToolInfo {
@@ -86,15 +91,15 @@ interface ToolUpdate {
 
 export function toolInfoFromToolUse(toolUse: any): ToolInfo {
   const name = toolUse.name;
-  const input = toolUse.input;
 
   switch (name) {
-    case "Task":
+    case "Task": {
+      const input = toolUse.input as AgentInput | BashInput;
       return {
         title: input?.description ? input.description : "Task",
         kind: "think",
         content:
-          input && input.prompt
+          input && "prompt" in input
             ? [
                 {
                   type: "content",
@@ -103,30 +108,7 @@ export function toolInfoFromToolUse(toolUse: any): ToolInfo {
               ]
             : [],
       };
-
-    case "NotebookRead":
-      return {
-        title: input?.notebook_path ? `Read Notebook ${input.notebook_path}` : "Read Notebook",
-        kind: "read",
-        content: [],
-        locations: input?.notebook_path ? [{ path: input.notebook_path }] : [],
-      };
-
-    case "NotebookEdit":
-      return {
-        title: input?.notebook_path ? `Edit Notebook ${input.notebook_path}` : "Edit Notebook",
-        kind: "edit",
-        content:
-          input && input.new_source
-            ? [
-                {
-                  type: "content",
-                  content: { type: "text", text: input.new_source },
-                },
-              ]
-            : [],
-        locations: input?.notebook_path ? [{ path: input.notebook_path }] : [],
-      };
+    }
 
     case "Bash": {
       const input = toolUse.input as BashInput;
@@ -168,36 +150,6 @@ export function toolInfoFromToolUse(toolUse: any): ToolInfo {
       };
     }
 
-    case "LS":
-      return {
-        title: `List the ${input?.path ? "`" + input.path + "`" : "current"} directory's contents`,
-        kind: "search",
-        content: [],
-        locations: [],
-      };
-
-    case "Edit": {
-      const input = toolUse.input as FileEditInput;
-      const path = input?.file_path ?? input?.file_path;
-
-      return {
-        title: path ? `Edit \`${path}\`` : "Edit",
-        kind: "edit",
-        content:
-          input && path
-            ? [
-                {
-                  type: "diff",
-                  path,
-                  oldText: input.old_string ?? null,
-                  newText: input.new_string ?? "",
-                },
-              ]
-            : [],
-        locations: path ? [{ path }] : undefined,
-      };
-    }
-
     case "Write": {
       const input = toolUse.input as FileWriteInput;
       let content: ToolCallContent[] = [];
@@ -227,6 +179,7 @@ export function toolInfoFromToolUse(toolUse: any): ToolInfo {
     }
 
     case "Glob": {
+      const input = toolUse.input as GlobInput;
       let label = "Find";
       if (input.path) {
         label += ` \`${input.path}\``;
@@ -243,6 +196,7 @@ export function toolInfoFromToolUse(toolUse: any): ToolInfo {
     }
 
     case "Grep": {
+      const input = toolUse.input as GrepInput;
       let label = "grep";
 
       if (input["-i"]) {
@@ -264,13 +218,13 @@ export function toolInfoFromToolUse(toolUse: any): ToolInfo {
 
       if (input.output_mode) {
         switch (input.output_mode) {
-          case "FilesWithMatches":
+          case "files_with_matches":
             label += " -l";
             break;
-          case "Count":
+          case "count":
             label += " -c";
             break;
-          case "Content":
+          case "content":
           default:
             break;
         }
@@ -307,7 +261,8 @@ export function toolInfoFromToolUse(toolUse: any): ToolInfo {
       };
     }
 
-    case "WebFetch":
+    case "WebFetch": {
+      const input = toolUse.input as WebFetchInput;
       return {
         title: input?.url ? `Fetch ${input.url}` : "Fetch",
         kind: "fetch",
@@ -321,8 +276,10 @@ export function toolInfoFromToolUse(toolUse: any): ToolInfo {
               ]
             : [],
       };
+    }
 
     case "WebSearch": {
+      const input = toolUse.input as WebSearchInput;
       let label = `"${input.query}"`;
 
       if (input.allowed_domains && input.allowed_domains.length > 0) {
@@ -340,7 +297,8 @@ export function toolInfoFromToolUse(toolUse: any): ToolInfo {
       };
     }
 
-    case "TodoWrite":
+    case "TodoWrite": {
+      const input = toolUse.input as TodoWriteInput;
       return {
         title: Array.isArray(input?.todos)
           ? `Update TODOs: ${input.todos.map((todo: any) => todo.content).join(", ")}`
@@ -348,18 +306,18 @@ export function toolInfoFromToolUse(toolUse: any): ToolInfo {
         kind: "think",
         content: [],
       };
+    }
 
-    case "ExitPlanMode":
+    case "ExitPlanMode": {
       return {
         title: "Ready to code?",
         kind: "switch_mode",
-        content:
-          input && input.plan
-            ? [{ type: "content", content: { type: "text", text: input.plan } }]
-            : [],
+        content: [],
       };
+    }
 
     case "Other": {
+      const input = toolUse.input;
       let output;
       try {
         output = JSON.stringify(input, null, 2);
@@ -492,6 +450,11 @@ export function toolUpdateFromToolResult(
       return result;
     }
 
+    case "Bash": {
+      // todo!
+      return {};
+    }
+
     case "Write": {
       return {};
     }
@@ -500,20 +463,6 @@ export function toolUpdateFromToolResult(
       return { title: "Exited Plan Mode" };
     }
 
-    case "Task":
-    case "NotebookEdit":
-    case "NotebookRead":
-    case "TodoWrite":
-    case "exit_plan_mode":
-    case "Bash":
-    case "BashOutput":
-    case "KillBash":
-    case "LS":
-    case "Glob":
-    case "Grep":
-    case "WebFetch":
-    case "WebSearch":
-    case "Other":
     default: {
       return toAcpContentUpdate(
         toolResult.content,

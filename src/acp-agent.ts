@@ -1099,8 +1099,6 @@ export class ClaudeAcpAgent implements Agent {
         "Write",
         "Edit",
         "Bash",
-        "BashOutput",
-        "KillShell",
         "Glob",
         "Grep",
         "Task",

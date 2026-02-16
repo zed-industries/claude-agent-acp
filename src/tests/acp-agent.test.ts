@@ -319,24 +319,6 @@ describe("tool conversions", () => {
     });
   });
 
-  it("should handle LS tool calls", () => {
-    const tool_use = {
-      type: "tool_use",
-      id: "toolu_01EEqsX7Eb9hpx87KAHVPTey",
-      name: "LS",
-      input: {
-        path: "/Users/test/github/claude-agent-acp",
-      },
-    };
-
-    expect(toolInfoFromToolUse(tool_use)).toStrictEqual({
-      kind: "search",
-      title: "List the `/Users/test/github/claude-agent-acp` directory's contents",
-      content: [],
-      locations: [],
-    });
-  });
-
   it("should handle Grep tool calls", () => {
     const tool_use = {
       type: "tool_use",
@@ -497,23 +479,6 @@ describe("tool conversions", () => {
       title: "Read /Users/test/project/large.txt (from line 200)",
       content: [],
       locations: [{ path: "/Users/test/project/large.txt", line: 200 }],
-    });
-  });
-
-  it("should handle BashOutput entries", () => {
-    const tool_use = {
-      type: "tool_use",
-      id: "toolu_01SJUWPtj1QspgANgtpqGPuN",
-      name: "BashOutput",
-      input: {
-        bash_id: "bash_1",
-      },
-    };
-
-    expect(toolInfoFromToolUse(tool_use)).toStrictEqual({
-      kind: "execute",
-      title: `Tail Logs`,
-      content: [],
     });
   });
 
