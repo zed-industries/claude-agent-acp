@@ -51,7 +51,6 @@ import {
   SDKHookProgressMessage,
   SDKHookResponseMessage,
   SDKHookStartedMessage,
-  SDKMessage,
   SDKPartialAssistantMessage,
   SDKResultMessage,
   SDKStatusMessage,
