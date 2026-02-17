@@ -8,7 +8,7 @@
   "main": "dist/lib.js",
   "types": "dist/lib.d.ts",
   "bin": {
-    "claude-agent-acp": "./dist/index.js"
+    "claude-agent-acp": "dist/index.js"
   },
   "type": "module",
   "exports": {
