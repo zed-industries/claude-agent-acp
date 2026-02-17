@@ -180,7 +180,7 @@ import {
   toolUpdateFromToolResult,
   createPreToolUseHook,
   toolNames,
-} from "@zed-industries/claude-code-acp";
+} from "@zed-industries/claude-agent-acp";
 
 // Type-only imports
 import type {
@@ -192,7 +192,7 @@ import type {
   PermissionCheckResult,
   SettingsManagerOptions,
   ClaudePlanEntry,
-} from "@zed-industries/claude-code-acp";
+} from "@zed-industries/claude-agent-acp";
 
 // Verify exports exist and have expected types
 const _runAcp: typeof runAcp = runAcp;
@@ -222,13 +222,13 @@ import {
   ACP_TOOL_NAME_PREFIX,
   toolInfoFromToolUse,
   planEntries,
-} from "@zed-industries/claude-code-acp/dist/tools.js";
+} from "@zed-industries/claude-agent-acp/dist/tools.js";
 
 // Deep import from dist/settings.js
 import {
   SettingsManager,
   getManagedSettingsPath,
-} from "@zed-industries/claude-code-acp/dist/settings.js";
+} from "@zed-industries/claude-agent-acp/dist/settings.js";
 
 // Deep import from dist/utils.js
 import {
@@ -236,7 +236,7 @@ import {
   nodeToWebReadable,
   nodeToWebWritable,
   loadManagedSettings,
-} from "@zed-industries/claude-code-acp/dist/utils.js";
+} from "@zed-industries/claude-agent-acp/dist/utils.js";
 
 // Verify types work
 const prefix: string = ACP_TOOL_NAME_PREFIX;
@@ -263,7 +263,7 @@ import {
   ClaudeCodeSettings,
   PermissionCheckResult,
   SettingsManagerOptions
-} from "@zed-industries/claude-code-acp";
+} from "@zed-industries/claude-agent-acp";
 
 // Test constructor signature
 const options: SettingsManagerOptions = {
@@ -318,7 +318,7 @@ async function testMethods() {
       await writeTestFile(
         "test-claude-acp-agent.ts",
         `
-import { ClaudeAcpAgent } from "@zed-industries/claude-code-acp";
+import { ClaudeAcpAgent } from "@zed-industries/claude-agent-acp";
 import type { AgentSideConnection } from "@agentclientprotocol/sdk";
 
 // ClaudeAcpAgent should be a class that can be instantiated
@@ -362,7 +362,7 @@ import type {
   ClaudePlanEntry,
   ToolUpdateMeta,
   NewSessionMeta,
-} from "@zed-industries/claude-code-acp";
+} from "@zed-industries/claude-agent-acp";
 
 // Test ClaudeCodeSettings shape
 const settings: ClaudeCodeSettings = {
@@ -441,9 +441,9 @@ import {
   loadManagedSettings,
   applyEnvironmentSettings,
   SettingsManager,
-} from "@zed-industries/claude-code-acp";
+} from "@zed-industries/claude-agent-acp";
 
-import type { ClaudeCodeSettings } from "@zed-industries/claude-code-acp";
+import type { ClaudeCodeSettings } from "@zed-industries/claude-agent-acp";
 
 // runAcp should be a function with no parameters that returns void
 const runAcpType: () => void = runAcp;
@@ -488,7 +488,7 @@ const applyResult: void = applyEnvironmentSettings({ permissions: {} });
       await writeTestFile(
         "test-pushable.ts",
         `
-import { Pushable } from "@zed-industries/claude-code-acp";
+import { Pushable } from "@zed-industries/claude-agent-acp";
 
 // Pushable should be a generic class
 const pushable = new Pushable<string>();
@@ -530,7 +530,7 @@ customPushable.push({ id: 1, name: "test" });
       await writeTestFile(
         "test-invalid-types.ts",
         `
-import { SettingsManager, ClaudeCodeSettings } from "@zed-industries/claude-code-acp";
+import { SettingsManager, ClaudeCodeSettings } from "@zed-industries/claude-agent-acp";
 
 // This should fail - SettingsManager constructor requires string cwd
 // @ts-expect-error - Testing that wrong argument type fails

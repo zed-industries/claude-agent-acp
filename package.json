@@ -1,14 +1,14 @@
 {
-  "name": "@zed-industries/claude-code-acp",
+  "name": "@zed-industries/claude-agent-acp",
   "publishConfig": {
     "access": "public"
   },
-  "version": "0.16.2",
-  "description": "An ACP-compatible coding agent powered by the Claude Code SDK (TypeScript)",
+  "version": "0.17.0",
+  "description": "An ACP-compatible coding agent powered by the Claude Agent SDK (TypeScript)",
   "main": "dist/lib.js",
   "types": "dist/lib.d.ts",
   "bin": {
-    "claude-code-acp": "./dist/index.js"
+    "claude-agent-acp": "./dist/index.js"
   },
   "type": "module",
   "exports": {
@@ -49,13 +49,13 @@
     "sdk",
     "code"
   ],
-  "homepage": "https://github.com/zed-industries/claude-code-acp#readme",
+  "homepage": "https://github.com/zed-industries/claude-agent-acp#readme",
   "bugs": {
-    "url": "https://github.com/zed-industries/claude-code-acp/issues"
+    "url": "https://github.com/zed-industries/claude-agent-acp/issues"
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/zed-industries/claude-code-acp.git"
+    "url": "git+https://github.com/zed-industries/claude-agent-acp.git"
   },
   "author": "Zed Industries",
   "license": "Apache-2.0",

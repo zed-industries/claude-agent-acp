@@ -325,13 +325,13 @@ describe("tool conversions", () => {
       id: "toolu_01EEqsX7Eb9hpx87KAHVPTey",
       name: "LS",
       input: {
-        path: "/Users/test/github/claude-code-acp",
+        path: "/Users/test/github/claude-agent-acp",
       },
     };
 
     expect(toolInfoFromToolUse(tool_use)).toStrictEqual({
       kind: "search",
-      title: "List the `/Users/test/github/claude-code-acp` directory's contents",
+      title: "List the `/Users/test/github/claude-agent-acp` directory's contents",
       content: [],
       locations: [],
     });

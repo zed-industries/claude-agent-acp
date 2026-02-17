@@ -241,7 +241,7 @@ describe("unstable_listSessions", () => {
   });
 
   it("returns the true cwd for paths containing hyphens", async () => {
-    const cwd = "/Users/test/claude-code-acp";
+    const cwd = "/Users/test/claude-agent-acp";
     writeSessionFile(cwd, "hyphen-session", { userMessage: "Hyphen test" });
 
     const result = await agent.unstable_listSessions({});
@@ -252,14 +252,14 @@ describe("unstable_listSessions", () => {
   });
 
   it("filters hyphenated paths by cwd correctly", async () => {
-    writeSessionFile("/Users/test/claude-code-acp", "hyphen-a", { userMessage: "A" });
+    writeSessionFile("/Users/test/claude-agent-acp", "hyphen-a", { userMessage: "A" });
     writeSessionFile("/Users/test/other-project", "hyphen-b", { userMessage: "B" });
 
-    const result = await agent.unstable_listSessions({ cwd: "/Users/test/claude-code-acp" });
+    const result = await agent.unstable_listSessions({ cwd: "/Users/test/claude-agent-acp" });
 
     expect(result.sessions).toHaveLength(1);
     expect(result.sessions[0]!.sessionId).toBe("hyphen-a");
-    expect(result.sessions[0]!.cwd).toBe("/Users/test/claude-code-acp");
+    expect(result.sessions[0]!.cwd).toBe("/Users/test/claude-agent-acp");
   });
 
   it("returns all sessions when cwd is not specified", async () => {

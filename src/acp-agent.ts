@@ -136,7 +136,7 @@ type BackgroundTerminal =
     };
 
 /**
- * Extra metadata that can be given to Claude Code when creating a new session.
+ * Extra metadata that can be given when creating a new session.
  */
 export type NewSessionMeta = {
   claudeCode?: {
@@ -207,7 +207,7 @@ export class ClaudeAcpAgent implements Agent {
     // Default authMethod
     const authMethod: any = {
       description: "Run `claude /login` in the terminal",
-      name: "Log in with Claude Code",
+      name: "Log in with Claude",
       id: "claude-login",
     };
 
@@ -219,7 +219,7 @@ export class ClaudeAcpAgent implements Agent {
         "terminal-auth": {
           command: "node",
           args: [cliPath],
-          label: "Claude Code Login",
+          label: "Claude Login",
         },
       };
     }
@@ -244,7 +244,7 @@ export class ClaudeAcpAgent implements Agent {
       },
       agentInfo: {
         name: packageJson.name,
-        title: "Claude Code",
+        title: "Claude Agent",
         version: packageJson.version,
       },
       authMethods: [authMethod],
@@ -1511,7 +1511,7 @@ export function toAcpNotifications(
                   });
                 } else {
                   logger.error(
-                    `[claude-code-acp] Got a tool response for tool use that wasn't tracked: ${toolUseId}`,
+                    `[claude-agent-acp] Got a tool response for tool use that wasn't tracked: ${toolUseId}`,
                   );
                 }
               },
@@ -1551,7 +1551,7 @@ export function toAcpNotifications(
         const toolUse = toolUseCache[chunk.tool_use_id];
         if (!toolUse) {
           logger.error(
-            `[claude-code-acp] Got a tool result for tool use that wasn't tracked: ${chunk.tool_use_id}`,
+            `[claude-agent-acp] Got a tool result for tool use that wasn't tracked: ${chunk.tool_use_id}`,
           );
           break;
         }
