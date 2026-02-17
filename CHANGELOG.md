@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.17.1
+
+- Update to @anthropic-ai/claude-agent-sdk@0.2.45 to add access to Sonnet 4.6
+
 ## 0.17.0
 
 Rename from `@zed-industries/claude-code-acp` to `@zed-industries/claude-agent-acp` to align with the current [branding guidelines](https://platform.claude.com/docs/en/agent-sdk/overview#branding-guidelines)

@@ -44,8 +44,24 @@ import {
   PermissionMode,
   Query,
   query,
+  SDKAssistantMessage,
+  SDKAuthStatusMessage,
+  SDKCompactBoundaryMessage,
+  SDKFilesPersistedEvent,
+  SDKHookProgressMessage,
+  SDKHookResponseMessage,
+  SDKHookStartedMessage,
+  SDKMessage,
   SDKPartialAssistantMessage,
+  SDKResultMessage,
+  SDKStatusMessage,
+  SDKSystemMessage,
+  SDKTaskNotificationMessage,
+  SDKTaskStartedMessage,
+  SDKToolProgressMessage,
+  SDKToolUseSummaryMessage,
   SDKUserMessage,
+  SDKUserMessageReplay,
   SlashCommand,
 } from "@anthropic-ai/claude-agent-sdk";
 import * as fs from "node:fs";
@@ -75,6 +91,26 @@ import { BetaContentBlock, BetaRawContentBlockDelta } from "@anthropic-ai/sdk/re
 import packageJson from "../package.json" with { type: "json" };
 import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
+
+// SDK has an unresolved rate limit type, reconstructing with the rest for now
+type SDKMessageTemp =
+  | SDKAssistantMessage
+  | SDKUserMessage
+  | SDKUserMessageReplay
+  | SDKResultMessage
+  | SDKSystemMessage
+  | SDKPartialAssistantMessage
+  | SDKCompactBoundaryMessage
+  | SDKStatusMessage
+  | SDKHookStartedMessage
+  | SDKHookProgressMessage
+  | SDKHookResponseMessage
+  | SDKToolProgressMessage
+  | SDKAuthStatusMessage
+  | SDKTaskNotificationMessage
+  | SDKTaskStartedMessage
+  | SDKFilesPersistedEvent
+  | SDKToolUseSummaryMessage;
 
 export const CLAUDE_CONFIG_DIR =
   process.env.CLAUDE_CONFIG_DIR ?? path.join(os.homedir(), ".claude");
@@ -555,7 +591,8 @@ export class ClaudeAcpAgent implements Agent {
 
     input.push(promptToClaude(params));
     while (true) {
-      const { value: message, done } = await query.next();
+      const { value: message, done } = await (query as AsyncGenerator<SDKMessageTemp, void>).next();
+
       if (done || !message) {
         if (this.sessions[params.sessionId].cancelled) {
           return { stopReason: "cancelled" };
@@ -575,6 +612,7 @@ export class ClaudeAcpAgent implements Agent {
             case "hook_response":
             case "status":
             case "files_persisted":
+            case "task_started":
               // Todo: process via status api: https://docs.claude.com/en/docs/claude-code/hooks#hook-output
               break;
             default:
