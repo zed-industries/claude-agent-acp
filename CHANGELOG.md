@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.16.2
+
+- Update to @anthropic-ai/claude-agent-sdk@0.2.44
+- fix: Replace all non-alphanumeric characters for session loading in encodeProjectPath (#307)
+- don't include /login slash command in login command (#315)
+
 ## 0.16.1
 
 - Update to @anthropic-ai/claude-agent-sdk@0.2.38
