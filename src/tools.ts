@@ -491,7 +491,7 @@ export function toolUpdateFromToolResult(
                     type: "text",
                     text: markdownEscape(content.text.replace(SYSTEM_REMINDER, "")),
                   }
-                : content,
+                : toAcpContentBlock(content, false),
           })),
         };
       } else if (typeof toolResult.content === "string" && toolResult.content.length > 0) {

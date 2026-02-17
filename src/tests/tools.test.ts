@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { AgentSideConnection } from "@agentclientprotocol/sdk";
-import { ToolResultBlockParam } from "@anthropic-ai/sdk/resources";
+import { ImageBlockParam, ToolResultBlockParam } from "@anthropic-ai/sdk/resources";
 import {
   BetaMCPToolResultBlock,
   BetaTextBlock,
@@ -314,5 +314,99 @@ describe("rawOutput in tool call updates", () => {
 
     // TodoWrite should not emit tool_call_update - it emits plan updates instead
     expect(notifications).toHaveLength(0);
+  });
+
+  it("should convert Read tool base64 image content to ACP image format", () => {
+    const toolUseCache: ToolUseCache = {
+      toolu_img: {
+        type: "tool_use",
+        id: "toolu_img",
+        name: "Read",
+        input: { file_path: "/test/image.png" },
+      },
+    };
+
+    const imageBlock: ImageBlockParam = {
+      type: "image",
+      source: { type: "base64", data: "iVBORw0KGgo=", media_type: "image/png" },
+    };
+
+    const toolResult: ToolResultBlockParam = {
+      type: "tool_result",
+      tool_use_id: "toolu_img",
+      content: [imageBlock],
+      is_error: false,
+    };
+
+    const notifications = toAcpNotifications(
+      [toolResult],
+      "assistant",
+      "test-session",
+      toolUseCache,
+      mockClient,
+      mockLogger,
+    );
+
+    expect(notifications).toHaveLength(1);
+    expect(notifications[0].update).toMatchObject({
+      sessionUpdate: "tool_call_update",
+      toolCallId: "toolu_img",
+      status: "completed",
+      content: [
+        {
+          type: "content",
+          content: { type: "image", data: "iVBORw0KGgo=", mimeType: "image/png" },
+        },
+      ],
+    });
+  });
+
+  it("should handle Read tool with mixed text and image content", () => {
+    const toolUseCache: ToolUseCache = {
+      toolu_mix: {
+        type: "tool_use",
+        id: "toolu_mix",
+        name: "Read",
+        input: { file_path: "/test/image.png" },
+      },
+    };
+
+    const imageBlock: ImageBlockParam = {
+      type: "image",
+      source: { type: "base64", data: "iVBORw0KGgo=", media_type: "image/png" },
+    };
+
+    const toolResult: ToolResultBlockParam = {
+      type: "tool_result",
+      tool_use_id: "toolu_mix",
+      content: [{ type: "text", text: "File preview:" }, imageBlock],
+      is_error: false,
+    };
+
+    const notifications = toAcpNotifications(
+      [toolResult],
+      "assistant",
+      "test-session",
+      toolUseCache,
+      mockClient,
+      mockLogger,
+    );
+
+    expect(notifications).toHaveLength(1);
+    expect(notifications[0].update).toMatchObject({
+      sessionUpdate: "tool_call_update",
+      toolCallId: "toolu_mix",
+      status: "completed",
+      content: [
+        {
+          type: "content",
+          content: { type: "text", text: "```\nFile preview:\n```" },
+        },
+        {
+          type: "content",
+          content: { type: "image", data: "iVBORw0KGgo=", mimeType: "image/png" },
+        },
+      ],
+    });
   });
 });
