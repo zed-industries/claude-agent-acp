@@ -756,10 +756,15 @@ export class ClaudeAcpAgent implements Agent {
         try {
           await this.sessions[params.sessionId].query.setPermissionMode(params.modeId);
         } catch (error) {
-          const errorMessage =
-            error instanceof Error && error.message ? error.message : "Invalid Mode";
-
-          throw new Error(errorMessage);
+          if (error instanceof Error) {
+            if (!error.message) {
+              error.message = "Invalid Mode";
+            }
+            throw error;
+          } else {
+            // eslint-disable-next-line preserve-caught-error
+            throw new Error("Invalid Mode");
+          }
         }
         return {};
       default:

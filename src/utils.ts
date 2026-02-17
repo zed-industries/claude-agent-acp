@@ -133,7 +133,6 @@ export function extractLinesWithByteLimit(
 
   let linesSeen = 0;
   let index = 0;
-  linesSeen = 0;
 
   let contentLength = 0;
   let wasLimited = false;
