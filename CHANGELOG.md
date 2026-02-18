@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.18.0
+
+- Switch over to built-in Claude tools. We no longer replicate specific ACP tools and just rely on sending updates based on Claude's internal tools. This means it won't use client capabilities for files or terminals, but also means there will be less difference and hopefully issues arising from the differences in behavior.
+- Support ACP session config options: https://agentclientprotocol.com/protocol/session-config-options
+- Fix for image output from tool calls.
+
 ## 0.17.1
 
 - Update to @anthropic-ai/claude-agent-sdk@0.2.45 to add access to Sonnet 4.6
