@@ -792,7 +792,9 @@ describe("Bash terminal output", () => {
 
       // With support: output is delivered via terminal_output _meta, content references the terminal widget
       expect(withSupport).toHaveLength(2);
-      expect((withSupport[1].update as any).content).toEqual([{ type: "terminal", terminalId: "toolu_bash" }]);
+      expect((withSupport[1].update as any).content).toEqual([
+        { type: "terminal", terminalId: "toolu_bash" },
+      ]);
 
       // Without support: content is on the only notification
       expect((withoutSupport[0].update as any).content).toEqual([
