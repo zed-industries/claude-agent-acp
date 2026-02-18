@@ -23,9 +23,12 @@ import {
   RequestError,
   ResumeSessionRequest,
   ResumeSessionResponse,
+  SessionConfigOption,
   SessionInfo,
   SessionModelState,
   SessionNotification,
+  SetSessionConfigOptionRequest,
+  SetSessionConfigOptionResponse,
   SetSessionModelRequest,
   SetSessionModelResponse,
   SetSessionModeRequest,
@@ -34,6 +37,7 @@ import {
   TerminalOutputResponse,
   WriteTextFileRequest,
   WriteTextFileResponse,
+  SessionModeState,
 } from "@agentclientprotocol/sdk";
 import { SettingsManager } from "./settings.js";
 import {
@@ -143,6 +147,7 @@ type Session = {
   cancelled: boolean;
   permissionMode: PermissionMode;
   settingsManager: SettingsManager;
+  configOptions: SessionConfigOption[];
 };
 
 type SessionHistoryEntry = {
@@ -419,6 +424,7 @@ export class ClaudeAcpAgent implements Agent {
     return {
       modes: response.modes,
       models: response.models,
+      configOptions: response.configOptions,
     };
   }
 
@@ -789,6 +795,7 @@ export class ClaudeAcpAgent implements Agent {
       throw new Error("Session not found");
     }
     await this.sessions[params.sessionId].query.setModel(params.modelId);
+    await this.updateConfigOption(params.sessionId, "model", params.modelId);
   }
 
   async setSessionMode(params: SetSessionModeRequest): Promise<SetSessionModeResponse> {
@@ -796,29 +803,77 @@ export class ClaudeAcpAgent implements Agent {
       throw new Error("Session not found");
     }
 
-    switch (params.modeId) {
+    await this.applySessionMode(params.sessionId, params.modeId);
+    await this.updateConfigOption(params.sessionId, "mode", params.modeId);
+    return {};
+  }
+
+  async setSessionConfigOption(
+    params: SetSessionConfigOptionRequest,
+  ): Promise<SetSessionConfigOptionResponse> {
+    const session = this.sessions[params.sessionId];
+    if (!session) {
+      throw new Error("Session not found");
+    }
+
+    const option = session.configOptions.find((o) => o.id === params.configId);
+    if (!option) {
+      throw new Error(`Unknown config option: ${params.configId}`);
+    }
+
+    const allValues =
+      "options" in option && Array.isArray(option.options)
+        ? option.options.flatMap((o) => ("options" in o ? o.options : [o]))
+        : [];
+    const validValue = allValues.find((o) => o.value === params.value);
+    if (!validValue) {
+      throw new Error(`Invalid value for config option ${params.configId}: ${params.value}`);
+    }
+
+    if (params.configId === "mode") {
+      await this.applySessionMode(params.sessionId, params.value);
+      await this.client.sessionUpdate({
+        sessionId: params.sessionId,
+        update: {
+          sessionUpdate: "current_mode_update",
+          currentModeId: params.value,
+        },
+      });
+    } else if (params.configId === "model") {
+      await this.sessions[params.sessionId].query.setModel(params.value);
+    }
+
+    session.configOptions = session.configOptions.map((o) =>
+      o.id === params.configId ? { ...o, currentValue: params.value } : o,
+    );
+
+    return { configOptions: session.configOptions };
+  }
+
+  private async applySessionMode(sessionId: string, modeId: string): Promise<void> {
+    switch (modeId) {
       case "default":
       case "acceptEdits":
       case "bypassPermissions":
       case "dontAsk":
       case "plan":
-        this.sessions[params.sessionId].permissionMode = params.modeId;
-        try {
-          await this.sessions[params.sessionId].query.setPermissionMode(params.modeId);
-        } catch (error) {
-          if (error instanceof Error) {
-            if (!error.message) {
-              error.message = "Invalid Mode";
-            }
-            throw error;
-          } else {
-            // eslint-disable-next-line preserve-caught-error
-            throw new Error("Invalid Mode");
-          }
-        }
-        return {};
+        break;
       default:
         throw new Error("Invalid Mode");
+    }
+    this.sessions[sessionId].permissionMode = modeId;
+    try {
+      await this.sessions[sessionId].query.setPermissionMode(modeId);
+    } catch (error) {
+      if (error instanceof Error) {
+        if (!error.message) {
+          error.message = "Invalid Mode";
+        }
+        throw error;
+      } else {
+        // eslint-disable-next-line preserve-caught-error
+        throw new Error("Invalid Mode");
+      }
     }
   }
 
@@ -945,6 +1000,7 @@ export class ClaudeAcpAgent implements Agent {
               currentModeId: response.outcome.optionId,
             },
           });
+          await this.updateConfigOption(sessionId, "mode", response.outcome.optionId);
 
           return {
             behavior: "allow",
@@ -1037,6 +1093,27 @@ export class ClaudeAcpAgent implements Agent {
       update: {
         sessionUpdate: "available_commands_update",
         availableCommands: getAvailableSlashCommands(commands),
+      },
+    });
+  }
+
+  private async updateConfigOption(
+    sessionId: string,
+    configId: string,
+    value: string,
+  ): Promise<void> {
+    const session = this.sessions[sessionId];
+    if (!session) return;
+
+    session.configOptions = session.configOptions.map((o) =>
+      o.id === configId ? { ...o, currentValue: value } : o,
+    );
+
+    await this.client.sessionUpdate({
+      sessionId,
+      update: {
+        sessionUpdate: "config_option_update",
+        configOptions: session.configOptions,
       },
     });
   }
@@ -1177,6 +1254,7 @@ export class ClaudeAcpAgent implements Agent {
                       currentModeId: "plan",
                     },
                   });
+                  await this.updateConfigOption(sessionId, "mode", "plan");
                 },
               }),
             ],
@@ -1208,6 +1286,7 @@ export class ClaudeAcpAgent implements Agent {
       cancelled: false,
       permissionMode,
       settingsManager,
+      configOptions: [],
     };
 
     const initializationResult = await q.initializationResult();
@@ -1245,15 +1324,55 @@ export class ClaudeAcpAgent implements Agent {
       });
     }
 
+    const modes = {
+      currentModeId: permissionMode,
+      availableModes,
+    };
+
+    const configOptions = buildConfigOptions(modes, models);
+    this.sessions[sessionId].configOptions = configOptions;
+
     return {
       sessionId,
       models,
-      modes: {
-        currentModeId: permissionMode,
-        availableModes,
-      },
+      modes,
+      configOptions,
     };
   }
+}
+
+function buildConfigOptions(
+  modes: SessionModeState,
+  models: SessionModelState,
+): SessionConfigOption[] {
+  return [
+    {
+      id: "mode",
+      name: "Mode",
+      description: "Session permission mode",
+      category: "mode",
+      type: "select",
+      currentValue: modes.currentModeId,
+      options: modes.availableModes.map((m) => ({
+        value: m.id,
+        name: m.name,
+        description: m.description,
+      })),
+    },
+    {
+      id: "model",
+      name: "Model",
+      description: "AI model to use",
+      category: "model",
+      type: "select",
+      currentValue: models.currentModelId,
+      options: models.availableModels.map((m) => ({
+        value: m.modelId,
+        name: m.name,
+        description: m.description ?? undefined,
+      })),
+    },
+  ];
 }
 
 async function getAvailableModels(
