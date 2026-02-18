@@ -476,6 +476,7 @@ export function toolUpdateFromToolResult(
 
       if (supportsTerminalOutput) {
         return {
+          content: [{ type: "terminal" as const, terminalId }],
           _meta: {
             terminal_info: {
               terminal_id: terminalId,

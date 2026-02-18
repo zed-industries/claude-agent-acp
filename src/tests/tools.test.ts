@@ -463,7 +463,7 @@ describe("Bash terminal output", () => {
       const toolResult = makeBashResult("file1.txt\nfile2.txt", "", 0);
       const update = toolUpdateFromToolResult(toolResult, bashToolUse, true);
 
-      expect(update.content).toBeUndefined();
+      expect(update.content).toEqual([{ type: "terminal", terminalId: "toolu_bash" }]);
       expect(update._meta).toEqual({
         terminal_info: {
           terminal_id: "toolu_bash",
@@ -510,7 +510,7 @@ describe("Bash terminal output", () => {
       const toolResult = makeBashResult("", "", 0);
       const update = toolUpdateFromToolResult(toolResult, bashToolUse, true);
 
-      expect(update.content).toBeUndefined();
+      expect(update.content).toEqual([{ type: "terminal", terminalId: "toolu_bash" }]);
       expect(update._meta).toEqual({
         terminal_info: {
           terminal_id: "toolu_bash",
@@ -554,7 +554,7 @@ describe("Bash terminal output", () => {
       const toolResult = makeBashResult("hello\n\n\n", "", 0);
       const update = toolUpdateFromToolResult(toolResult, bashToolUse, true);
 
-      expect(update.content).toBeUndefined();
+      expect(update.content).toEqual([{ type: "terminal", terminalId: "toolu_bash" }]);
       expect(update._meta?.terminal_output?.data).toBe("hello\n\n\n");
     });
 
@@ -591,7 +591,7 @@ describe("Bash terminal output", () => {
         const toolResult = makeStringBashResult("Cargo.lock\nCargo.toml\nREADME.md");
         const update = toolUpdateFromToolResult(toolResult, bashToolUse, true);
 
-        expect(update.content).toBeUndefined();
+        expect(update.content).toEqual([{ type: "terminal", terminalId: "toolu_bash" }]);
         expect(update._meta).toEqual({
           terminal_info: { terminal_id: "toolu_bash" },
           terminal_output: { terminal_id: "toolu_bash", data: "Cargo.lock\nCargo.toml\nREADME.md" },
@@ -629,7 +629,7 @@ describe("Bash terminal output", () => {
         const toolResult = makeStringBashResult("");
         const update = toolUpdateFromToolResult(toolResult, bashToolUse, true);
 
-        expect(update.content).toBeUndefined();
+        expect(update.content).toEqual([{ type: "terminal", terminalId: "toolu_bash" }]);
         expect(update._meta).toEqual({
           terminal_info: { terminal_id: "toolu_bash" },
           terminal_output: { terminal_id: "toolu_bash", data: "" },
@@ -790,9 +790,9 @@ describe("Bash terminal output", () => {
         mockLogger,
       );
 
-      // With support: output is delivered via terminal_output _meta, content is absent
+      // With support: output is delivered via terminal_output _meta, content references the terminal widget
       expect(withSupport).toHaveLength(2);
-      expect((withSupport[1].update as any).content).toBeUndefined();
+      expect((withSupport[1].update as any).content).toEqual([{ type: "terminal", terminalId: "toolu_bash" }]);
 
       // Without support: content is on the only notification
       expect((withoutSupport[0].update as any).content).toEqual([
