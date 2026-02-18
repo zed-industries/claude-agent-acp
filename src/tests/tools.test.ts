@@ -451,7 +451,7 @@ describe("Bash terminal output", () => {
             type: "content",
             content: {
               type: "text",
-              text: "```sh\nfile1.txt\nfile2.txt\n```",
+              text: "```console\nfile1.txt\nfile2.txt\n```",
             },
           },
         ],
@@ -459,19 +459,11 @@ describe("Bash terminal output", () => {
       expect(update._meta).toBeUndefined();
     });
 
-    it("should return formatted content with _meta when supportsTerminalOutput is true", () => {
+    it("should return no content with _meta when supportsTerminalOutput is true", () => {
       const toolResult = makeBashResult("file1.txt\nfile2.txt", "", 0);
       const update = toolUpdateFromToolResult(toolResult, bashToolUse, true);
 
-      expect(update.content).toEqual([
-        {
-          type: "content",
-          content: {
-            type: "text",
-            text: "```sh\nfile1.txt\nfile2.txt\n```",
-          },
-        },
-      ]);
+      expect(update.content).toBeUndefined();
       expect(update._meta).toEqual({
         terminal_info: {
           terminal_id: "toolu_bash",
@@ -508,17 +500,17 @@ describe("Bash terminal output", () => {
           type: "content",
           content: {
             type: "text",
-            text: "```sh\nsome error output\n```",
+            text: "```console\nsome error output\n```",
           },
         },
       ]);
     });
 
-    it("should return empty content array with _meta when output is empty and supportsTerminalOutput is true", () => {
+    it("should return no content with _meta when output is empty and supportsTerminalOutput is true", () => {
       const toolResult = makeBashResult("", "", 0);
       const update = toolUpdateFromToolResult(toolResult, bashToolUse, true);
 
-      expect(update.content).toEqual([]);
+      expect(update.content).toBeUndefined();
       expect(update._meta).toEqual({
         terminal_info: {
           terminal_id: "toolu_bash",
@@ -552,25 +544,17 @@ describe("Bash terminal output", () => {
           type: "content",
           content: {
             type: "text",
-            text: "```sh\nhello\n```",
+            text: "```console\nhello\n```",
           },
         },
       ]);
     });
 
-    it("should trim trailing whitespace from output in content but preserve it in _meta data", () => {
+    it("should preserve trailing whitespace in _meta data when supportsTerminalOutput is true", () => {
       const toolResult = makeBashResult("hello\n\n\n", "", 0);
       const update = toolUpdateFromToolResult(toolResult, bashToolUse, true);
 
-      expect(update.content).toEqual([
-        {
-          type: "content",
-          content: {
-            type: "text",
-            text: "```sh\nhello\n```",
-          },
-        },
-      ]);
+      expect(update.content).toBeUndefined();
       expect(update._meta?.terminal_output?.data).toBe("hello\n\n\n");
     });
 
@@ -595,7 +579,7 @@ describe("Bash terminal output", () => {
               type: "content",
               content: {
                 type: "text",
-                text: "```sh\nCargo.lock\nCargo.toml\nREADME.md\n```",
+                text: "```console\nCargo.lock\nCargo.toml\nREADME.md\n```",
               },
             },
           ],
@@ -603,19 +587,11 @@ describe("Bash terminal output", () => {
         expect(update._meta).toBeUndefined();
       });
 
-      it("should format string content with _meta when supportsTerminalOutput is true", () => {
+      it("should return no content with _meta when supportsTerminalOutput is true", () => {
         const toolResult = makeStringBashResult("Cargo.lock\nCargo.toml\nREADME.md");
         const update = toolUpdateFromToolResult(toolResult, bashToolUse, true);
 
-        expect(update.content).toEqual([
-          {
-            type: "content",
-            content: {
-              type: "text",
-              text: "```sh\nCargo.lock\nCargo.toml\nREADME.md\n```",
-            },
-          },
-        ]);
+        expect(update.content).toBeUndefined();
         expect(update._meta).toEqual({
           terminal_info: { terminal_id: "toolu_bash" },
           terminal_output: { terminal_id: "toolu_bash", data: "Cargo.lock\nCargo.toml\nREADME.md" },
@@ -649,11 +625,11 @@ describe("Bash terminal output", () => {
         expect(update).toEqual({});
       });
 
-      it("should return empty content with _meta for empty string content with terminal support", () => {
+      it("should return no content with _meta for empty string content with terminal support", () => {
         const toolResult = makeStringBashResult("");
         const update = toolUpdateFromToolResult(toolResult, bashToolUse, true);
 
-        expect(update.content).toEqual([]);
+        expect(update.content).toBeUndefined();
         expect(update._meta).toEqual({
           terminal_info: { terminal_id: "toolu_bash" },
           terminal_output: { terminal_id: "toolu_bash", data: "" },
@@ -676,7 +652,7 @@ describe("Bash terminal output", () => {
               type: "content",
               content: {
                 type: "text",
-                text: "```sh\nline1\nline2\n```",
+                text: "```console\nline1\nline2\n```",
               },
             },
           ],
@@ -794,7 +770,7 @@ describe("Bash terminal output", () => {
       expect((notifications[0].update as any)._meta).not.toHaveProperty("terminal_output");
     });
 
-    it("should still include formatted content regardless of terminal_output support", () => {
+    it("should include formatted content only when terminal_output is not supported", () => {
       const withSupport = toAcpNotifications(
         [toolResult],
         "assistant",
@@ -814,21 +790,20 @@ describe("Bash terminal output", () => {
         mockLogger,
       );
 
-      const expectedContent = [
+      // With support: output is delivered via terminal_output _meta, content is absent
+      expect(withSupport).toHaveLength(2);
+      expect((withSupport[1].update as any).content).toBeUndefined();
+
+      // Without support: content is on the only notification
+      expect((withoutSupport[0].update as any).content).toEqual([
         {
           type: "content",
           content: {
             type: "text",
-            text: "```sh\nfile1.txt\nfile2.txt\n```",
+            text: "```console\nfile1.txt\nfile2.txt\n```",
           },
         },
-      ];
-
-      // With support: content is on the second (completion) notification
-      expect(withSupport).toHaveLength(2);
-      expect((withSupport[1].update as any).content).toEqual(expectedContent);
-      // Without support: content is on the only notification
-      expect((withoutSupport[0].update as any).content).toEqual(expectedContent);
+      ]);
     });
 
     it("should preserve claudeCode in _meta alongside terminal_exit on completion notification", () => {
