@@ -860,6 +860,220 @@ describe("Bash terminal output", () => {
     });
   });
 
+  describe("post-tool-use hook sends diff content for Edit tool", () => {
+    it("should include content and locations from structuredPatch in hook update", async () => {
+      const toolUseCache: ToolUseCache = {};
+
+      const hookUpdates: any[] = [];
+      const mockClientWithUpdate = {
+        sessionUpdate: async (notification: any) => {
+          hookUpdates.push(notification);
+        },
+      } as unknown as AgentSideConnection;
+
+      // Register hook callback by processing tool_use
+      toAcpNotifications(
+        [
+          {
+            type: "tool_use" as const,
+            id: "toolu_edit_hook",
+            name: "Edit",
+            input: {
+              file_path: "/Users/test/project/file.ts",
+              old_string: "old text",
+              new_string: "new text",
+            },
+          },
+        ],
+        "assistant",
+        "test-session",
+        toolUseCache,
+        mockClientWithUpdate,
+        mockLogger,
+      );
+
+      // Fire PostToolUse hook with a structuredPatch in tool_response
+      const hook = createPostToolUseHook(mockLogger);
+      await hook(
+        {
+          hook_event_name: "PostToolUse",
+          tool_name: "Edit",
+          tool_input: {
+            file_path: "/Users/test/project/file.ts",
+            old_string: "old text",
+            new_string: "new text",
+          },
+          tool_response: {
+            filePath: "/Users/test/project/file.ts",
+            oldString: "old text",
+            newString: "new text",
+            structuredPatch: [
+              {
+                oldStart: 5,
+                oldLines: 3,
+                newStart: 5,
+                newLines: 3,
+                lines: [" context before", "-old text", "+new text", " context after"],
+              },
+            ],
+          },
+          tool_use_id: "toolu_edit_hook",
+          session_id: "test-session",
+          transcript_path: "/tmp/test",
+          cwd: "/tmp",
+        },
+        "toolu_edit_hook",
+        { signal: AbortSignal.abort() },
+      );
+
+      expect(hookUpdates).toHaveLength(1);
+      const hookUpdate = hookUpdates[0].update;
+      expect(hookUpdate._meta.claudeCode.toolName).toBe("Edit");
+      expect(hookUpdate.content).toEqual([
+        {
+          type: "diff",
+          path: "/Users/test/project/file.ts",
+          oldText: "context before\nold text\ncontext after",
+          newText: "context before\nnew text\ncontext after",
+        },
+      ]);
+      expect(hookUpdate.locations).toEqual([{ path: "/Users/test/project/file.ts", line: 5 }]);
+    });
+
+    it("should include multiple diff blocks for replaceAll with multiple hunks", async () => {
+      const toolUseCache: ToolUseCache = {};
+
+      const hookUpdates: any[] = [];
+      const mockClientWithUpdate = {
+        sessionUpdate: async (notification: any) => {
+          hookUpdates.push(notification);
+        },
+      } as unknown as AgentSideConnection;
+
+      toAcpNotifications(
+        [
+          {
+            type: "tool_use" as const,
+            id: "toolu_edit_replace_all",
+            name: "Edit",
+            input: {
+              file_path: "/Users/test/project/file.ts",
+              old_string: "foo",
+              new_string: "bar",
+              replace_all: true,
+            },
+          },
+        ],
+        "assistant",
+        "test-session",
+        toolUseCache,
+        mockClientWithUpdate,
+        mockLogger,
+      );
+
+      const hook = createPostToolUseHook(mockLogger);
+      await hook(
+        {
+          hook_event_name: "PostToolUse",
+          tool_name: "Edit",
+          tool_input: {
+            file_path: "/Users/test/project/file.ts",
+            old_string: "foo",
+            new_string: "bar",
+            replace_all: true,
+          },
+          tool_response: {
+            filePath: "/Users/test/project/file.ts",
+            oldString: "foo",
+            newString: "bar",
+            replaceAll: true,
+            structuredPatch: [
+              {
+                oldStart: 3,
+                oldLines: 1,
+                newStart: 3,
+                newLines: 1,
+                lines: ["-foo", "+bar"],
+              },
+              {
+                oldStart: 15,
+                oldLines: 1,
+                newStart: 15,
+                newLines: 1,
+                lines: ["-foo", "+bar"],
+              },
+            ],
+          },
+          tool_use_id: "toolu_edit_replace_all",
+          session_id: "test-session",
+          transcript_path: "/tmp/test",
+          cwd: "/tmp",
+        },
+        "toolu_edit_replace_all",
+        { signal: AbortSignal.abort() },
+      );
+
+      expect(hookUpdates).toHaveLength(1);
+      const hookUpdate = hookUpdates[0].update;
+      expect(hookUpdate.content).toEqual([
+        { type: "diff", path: "/Users/test/project/file.ts", oldText: "foo", newText: "bar" },
+        { type: "diff", path: "/Users/test/project/file.ts", oldText: "foo", newText: "bar" },
+      ]);
+      expect(hookUpdate.locations).toEqual([
+        { path: "/Users/test/project/file.ts", line: 3 },
+        { path: "/Users/test/project/file.ts", line: 15 },
+      ]);
+    });
+
+    it("should not include content/locations for non-Edit tools", async () => {
+      const toolUseCache: ToolUseCache = {};
+
+      const hookUpdates: any[] = [];
+      const mockClientWithUpdate = {
+        sessionUpdate: async (notification: any) => {
+          hookUpdates.push(notification);
+        },
+      } as unknown as AgentSideConnection;
+
+      toAcpNotifications(
+        [
+          {
+            type: "tool_use" as const,
+            id: "toolu_bash_no_diff",
+            name: "Bash",
+            input: { command: "echo hi" },
+          },
+        ],
+        "assistant",
+        "test-session",
+        toolUseCache,
+        mockClientWithUpdate,
+        mockLogger,
+      );
+
+      const hook = createPostToolUseHook(mockLogger);
+      await hook(
+        {
+          hook_event_name: "PostToolUse",
+          tool_name: "Bash",
+          tool_input: { command: "echo hi" },
+          tool_response: "hi",
+          tool_use_id: "toolu_bash_no_diff",
+          session_id: "test-session",
+          transcript_path: "/tmp/test",
+          cwd: "/tmp",
+        },
+        "toolu_bash_no_diff",
+        { signal: AbortSignal.abort() },
+      );
+
+      expect(hookUpdates).toHaveLength(1);
+      const hookUpdate = hookUpdates[0].update;
+      expect(hookUpdate.content).toBeUndefined();
+      expect(hookUpdate.locations).toBeUndefined();
+    });
+  });
+
   describe("post-tool-use hook preserves terminal _meta", () => {
     it("should send terminal_output and terminal_exit as separate notifications, and hook should only have claudeCode", async () => {
       const clientCapabilities: ClientCapabilities = {

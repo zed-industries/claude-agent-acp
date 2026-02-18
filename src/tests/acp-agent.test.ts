@@ -17,7 +17,12 @@ import {
   WriteTextFileResponse,
 } from "@agentclientprotocol/sdk";
 import { nodeToWebWritable, nodeToWebReadable } from "../utils.js";
-import { markdownEscape, toolInfoFromToolUse, toolUpdateFromToolResult } from "../tools.js";
+import {
+  markdownEscape,
+  toolInfoFromToolUse,
+  toolUpdateFromToolResult,
+  toolUpdateFromEditToolResponse,
+} from "../tools.js";
 import { toAcpNotifications, promptToClaude } from "../acp-agent.js";
 import { query, SDKAssistantMessage } from "@anthropic-ai/claude-agent-sdk";
 import { randomUUID } from "crypto";
@@ -960,6 +965,126 @@ describe("tool conversions", () => {
         },
       ],
     });
+  });
+});
+
+describe("toolUpdateFromEditToolResponse", () => {
+  it("should return empty for non-object input", () => {
+    expect(toolUpdateFromEditToolResponse(null)).toEqual({});
+    expect(toolUpdateFromEditToolResponse(undefined)).toEqual({});
+    expect(toolUpdateFromEditToolResponse("string")).toEqual({});
+  });
+
+  it("should return empty when filePath or structuredPatch is missing", () => {
+    expect(toolUpdateFromEditToolResponse({})).toEqual({});
+    expect(toolUpdateFromEditToolResponse({ filePath: "/foo.ts" })).toEqual({});
+    expect(toolUpdateFromEditToolResponse({ structuredPatch: [] })).toEqual({});
+  });
+
+  it("should build diff content from a single-hunk structuredPatch", () => {
+    const toolResponse = {
+      filePath: "/Users/test/project/test.txt",
+      structuredPatch: [
+        {
+          oldStart: 1,
+          oldLines: 3,
+          newStart: 1,
+          newLines: 3,
+          lines: [" context before", "-old line", "+new line", " context after"],
+        },
+      ],
+    };
+
+    expect(toolUpdateFromEditToolResponse(toolResponse)).toEqual({
+      content: [
+        {
+          type: "diff",
+          path: "/Users/test/project/test.txt",
+          oldText: "context before\nold line\ncontext after",
+          newText: "context before\nnew line\ncontext after",
+        },
+      ],
+      locations: [{ path: "/Users/test/project/test.txt", line: 1 }],
+    });
+  });
+
+  it("should build multiple diff content blocks for replaceAll with multiple hunks", () => {
+    const toolResponse = {
+      filePath: "/Users/test/project/file.ts",
+      structuredPatch: [
+        {
+          oldStart: 5,
+          oldLines: 1,
+          newStart: 5,
+          newLines: 1,
+          lines: ["-oldValue", "+newValue"],
+        },
+        {
+          oldStart: 20,
+          oldLines: 1,
+          newStart: 20,
+          newLines: 1,
+          lines: ["-oldValue", "+newValue"],
+        },
+      ],
+    };
+
+    expect(toolUpdateFromEditToolResponse(toolResponse)).toEqual({
+      content: [
+        {
+          type: "diff",
+          path: "/Users/test/project/file.ts",
+          oldText: "oldValue",
+          newText: "newValue",
+        },
+        {
+          type: "diff",
+          path: "/Users/test/project/file.ts",
+          oldText: "oldValue",
+          newText: "newValue",
+        },
+      ],
+      locations: [
+        { path: "/Users/test/project/file.ts", line: 5 },
+        { path: "/Users/test/project/file.ts", line: 20 },
+      ],
+    });
+  });
+
+  it("should handle deletion (newText becomes empty string)", () => {
+    const toolResponse = {
+      filePath: "/Users/test/project/file.ts",
+      structuredPatch: [
+        {
+          oldStart: 10,
+          oldLines: 2,
+          newStart: 10,
+          newLines: 1,
+          lines: [" context", "-removed line"],
+        },
+      ],
+    };
+
+    expect(toolUpdateFromEditToolResponse(toolResponse)).toEqual({
+      content: [
+        {
+          type: "diff",
+          path: "/Users/test/project/file.ts",
+          oldText: "context\nremoved line",
+          newText: "context",
+        },
+      ],
+      locations: [{ path: "/Users/test/project/file.ts", line: 10 }],
+    });
+  });
+
+  it("should return empty for empty structuredPatch array", () => {
+    const toolResponse = {
+      filePath: "/Users/test/project/file.ts",
+      structuredPatch: [],
+    };
+
+    expect(toolUpdateFromEditToolResponse(toolResponse)).toEqual({});
   });
 });
 

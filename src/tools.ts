@@ -5,7 +5,6 @@ import {
   ToolCallLocation,
   ToolKind,
 } from "@agentclientprotocol/sdk";
-import * as diff from "diff";
 import {
   ImageBlockParam,
   TextBlockParam,
@@ -443,54 +442,6 @@ export function toolUpdateFromToolResult(
       }
       return {};
 
-    case "Edit": {
-      const content: ToolCallContent[] = [];
-      const locations: ToolCallLocation[] = [];
-
-      if (
-        Array.isArray(toolResult.content) &&
-        toolResult.content.length > 0 &&
-        "text" in toolResult.content[0] &&
-        typeof toolResult.content[0].text === "string"
-      ) {
-        const patches = diff.parsePatch(toolResult.content[0].text);
-        for (const { oldFileName, newFileName, hunks } of patches) {
-          for (const { lines, newStart } of hunks) {
-            const oldText = [];
-            const newText = [];
-            for (const line of lines) {
-              if (line.startsWith("-")) {
-                oldText.push(line.slice(1));
-              } else if (line.startsWith("+")) {
-                newText.push(line.slice(1));
-              } else {
-                oldText.push(line.slice(1));
-                newText.push(line.slice(1));
-              }
-            }
-            if (oldText.length > 0 || newText.length > 0) {
-              locations.push({ path: newFileName || oldFileName, line: newStart });
-              content.push({
-                type: "diff",
-                path: newFileName || oldFileName,
-                oldText: oldText.join("\n") || null,
-                newText: newText.join("\n"),
-              });
-            }
-          }
-        }
-      }
-
-      const result: ToolUpdate = {};
-      if (content.length > 0) {
-        result.content = content;
-      }
-      if (locations.length > 0) {
-        result.locations = locations;
-      }
-      return result;
-    }
-
     case "Bash": {
       const result = toolResult.content;
       const terminalId = "tool_use_id" in toolResult ? String(toolResult.tool_use_id) : "";
@@ -569,6 +520,7 @@ export function toolUpdateFromToolResult(
       return {};
     }
 
+    case "Edit": // Edit is handled in hooks
     case "Write": {
       return {};
     }
@@ -712,6 +664,66 @@ export function markdownEscape(text: string): string {
     }
   }
   return escape + "\n" + text + (text.endsWith("\n") ? "" : "\n") + escape;
+}
+
+interface EditToolResponseHunk {
+  oldStart: number;
+  oldLines: number;
+  newStart: number;
+  newLines: number;
+  lines: string[];
+}
+
+interface EditToolResponse {
+  filePath?: string;
+  structuredPatch?: EditToolResponseHunk[];
+}
+
+/**
+ * Builds diff ToolUpdate content from the structured Edit toolResponse provided
+ * by the PostToolUse hook. Unlike parsing the plain unified diff string, this uses
+ * the pre-parsed structuredPatch which supports multiple replacement sites (replaceAll)
+ * and always includes context lines for better readability.
+ */
+export function toolUpdateFromEditToolResponse(toolResponse: unknown): {
+  content?: ToolCallContent[];
+  locations?: ToolCallLocation[];
+} {
+  if (!toolResponse || typeof toolResponse !== "object") return {};
+  const response = toolResponse as EditToolResponse;
+  if (!response.filePath || !Array.isArray(response.structuredPatch)) return {};
+
+  const content: ToolCallContent[] = [];
+  const locations: ToolCallLocation[] = [];
+
+  for (const { lines, newStart } of response.structuredPatch) {
+    const oldText: string[] = [];
+    const newText: string[] = [];
+    for (const line of lines) {
+      if (line.startsWith("-")) {
+        oldText.push(line.slice(1));
+      } else if (line.startsWith("+")) {
+        newText.push(line.slice(1));
+      } else {
+        oldText.push(line.slice(1));
+        newText.push(line.slice(1));
+      }
+    }
+    if (oldText.length > 0 || newText.length > 0) {
+      locations.push({ path: response.filePath, line: newStart });
+      content.push({
+        type: "diff",
+        path: response.filePath,
+        oldText: oldText.join("\n") || null,
+        newText: newText.join("\n"),
+      });
+    }
+  }
+
+  const result: { content?: ToolCallContent[]; locations?: ToolCallLocation[] } = {};
+  if (content.length > 0) result.content = content;
+  if (locations.length > 0) result.locations = locations;
+  return result;
 }
 
 /* A global variable to store callbacks that should be executed when receiving hooks from Claude Code */

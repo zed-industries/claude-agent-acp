@@ -82,6 +82,7 @@ import {
   toolInfoFromToolUse,
   planEntries,
   toolUpdateFromToolResult,
+  toolUpdateFromEditToolResponse,
   ClaudePlanEntry,
   registerHookCallback,
   createPostToolUseHook,
@@ -1625,6 +1626,8 @@ export function toAcpNotifications(
               onPostToolUseHook: async (toolUseId, toolInput, toolResponse) => {
                 const toolUse = toolUseCache[toolUseId];
                 if (toolUse) {
+                  const editDiff =
+                    toolUse.name === "Edit" ? toolUpdateFromEditToolResponse(toolResponse) : {};
                   const update: SessionNotification["update"] = {
                     _meta: {
                       claudeCode: {
@@ -1634,6 +1637,7 @@ export function toAcpNotifications(
                     } satisfies ToolUpdateMeta,
                     toolCallId: toolUseId,
                     sessionUpdate: "tool_call_update",
+                    ...editDiff,
                   };
                   await client.sessionUpdate({
                     sessionId,
