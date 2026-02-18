@@ -271,7 +271,11 @@ describe("session config options", () => {
     it("updates stored configOptions currentValue when mode changes", async () => {
       await agent.setSessionMode({ sessionId: SESSION_ID, modeId: "plan" });
 
-      const session = (agent as unknown as { sessions: Record<string, { configOptions: typeof MOCK_CONFIG_OPTIONS }> }).sessions[SESSION_ID];
+      const session = (
+        agent as unknown as {
+          sessions: Record<string, { configOptions: typeof MOCK_CONFIG_OPTIONS }>;
+        }
+      ).sessions[SESSION_ID];
       const modeOption = session.configOptions.find((o) => o.id === "mode");
       expect(modeOption?.currentValue).toBe("plan");
     });
@@ -317,7 +321,11 @@ describe("session config options", () => {
         modelId: "claude-sonnet-4-5",
       });
 
-      const session = (agent as unknown as { sessions: Record<string, { configOptions: typeof MOCK_CONFIG_OPTIONS }> }).sessions[SESSION_ID];
+      const session = (
+        agent as unknown as {
+          sessions: Record<string, { configOptions: typeof MOCK_CONFIG_OPTIONS }>;
+        }
+      ).sessions[SESSION_ID];
       const modelOption = session.configOptions.find((o) => o.id === "model");
       expect(modelOption?.currentValue).toBe("claude-sonnet-4-5");
     });
@@ -383,7 +391,11 @@ describe("session config options", () => {
     it("setSessionMode also syncs configOptions", async () => {
       await agent.setSessionMode({ sessionId: SESSION_ID, modeId: "plan" });
 
-      const session = (agent as unknown as { sessions: Record<string, { configOptions: typeof MOCK_CONFIG_OPTIONS }> }).sessions[SESSION_ID];
+      const session = (
+        agent as unknown as {
+          sessions: Record<string, { configOptions: typeof MOCK_CONFIG_OPTIONS }>;
+        }
+      ).sessions[SESSION_ID];
       expect(session.configOptions.find((o) => o.id === "mode")?.currentValue).toBe("plan");
     });
 
@@ -393,7 +405,11 @@ describe("session config options", () => {
         modelId: "claude-sonnet-4-5",
       });
 
-      const session = (agent as unknown as { sessions: Record<string, { configOptions: typeof MOCK_CONFIG_OPTIONS }> }).sessions[SESSION_ID];
+      const session = (
+        agent as unknown as {
+          sessions: Record<string, { configOptions: typeof MOCK_CONFIG_OPTIONS }>;
+        }
+      ).sessions[SESSION_ID];
       expect(session.configOptions.find((o) => o.id === "model")?.currentValue).toBe(
         "claude-sonnet-4-5",
       );
