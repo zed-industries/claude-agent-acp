@@ -1251,7 +1251,7 @@ export class ClaudeAcpAgent implements Agent {
         : isStaticBinary()
           ? { pathToClaudeCodeExecutable: process.execPath }
           : {}),
-      disallowedTools,
+      disallowedTools: [...(userProvidedOptions?.disallowedTools || []), ...disallowedTools],
       tools: { type: "preset", preset: "claude_code" },
       hooks: {
         ...userProvidedOptions?.hooks,
