@@ -38,6 +38,7 @@ import {
   WriteTextFileRequest,
   WriteTextFileResponse,
   SessionModeState,
+  AuthMethod,
 } from "@agentclientprotocol/sdk";
 import { SettingsManager } from "./settings.js";
 import {
@@ -197,6 +198,22 @@ export type NewSessionMeta = {
 };
 
 /**
+ * Extra metadata for 'gateway' authentication requests.
+ */
+type GatewayAuthMeta = {
+  /**
+   * These parameters are mapped to environment variables to:
+   * - Redirect API calls via baseUrl
+   * - Inject custom headers
+   * - Bypass the default Claude login requirement
+   */
+  gateway: {
+    baseUrl: string;
+    headers: Record<string, string>;
+  };
+};
+
+/**
  * Extra metadata that the agent provides for each tool_call / tool_update update.
  */
 export type ToolUpdateMeta = {
@@ -248,6 +265,7 @@ export class ClaudeAcpAgent implements Agent {
   backgroundTerminals: { [key: string]: BackgroundTerminal } = {};
   clientCapabilities?: ClientCapabilities;
   logger: Logger;
+  gatewayAuthMeta?: GatewayAuthMeta;
 
   constructor(client: AgentSideConnection, logger?: Logger) {
     this.sessions = {};
@@ -264,6 +282,18 @@ export class ClaudeAcpAgent implements Agent {
       description: "Run `claude /login` in the terminal",
       name: "Log in with Claude",
       id: "claude-login",
+    };
+
+    // Bypasses standard auth by routing requests through a custom Anthropic-protocol gateway.
+    const gatewayAuthMethod: AuthMethod = {
+      id: "gateway",
+      name: "Custom model gateway",
+      description: "Use a custom gateway to authenticate and access models",
+      _meta: {
+        gateway: {
+          protocol: "anthropic",
+        },
+      },
     };
 
     // If client supports terminal-auth capability, use that instead.
@@ -312,12 +342,13 @@ export class ClaudeAcpAgent implements Agent {
         title: "Claude Agent",
         version: packageJson.version,
       },
-      authMethods: [authMethod],
+      authMethods: [authMethod, gatewayAuthMethod],
     };
   }
 
   async newSession(params: NewSessionRequest): Promise<NewSessionResponse> {
     if (
+      !this.gatewayAuthMeta &&
       fs.existsSync(path.resolve(os.homedir(), ".claude.json.backup")) &&
       !fs.existsSync(path.resolve(os.homedir(), ".claude.json"))
     ) {
@@ -607,6 +638,10 @@ export class ClaudeAcpAgent implements Agent {
   }
 
   async authenticate(_params: AuthenticateRequest): Promise<void> {
+    if (_params.methodId === "gateway") {
+      this.gatewayAuthMeta = _params._meta as GatewayAuthMeta | undefined;
+      return;
+    }
     throw new Error("Method not implemented.");
   }
 
@@ -1233,6 +1268,10 @@ export class ClaudeAcpAgent implements Agent {
       stderr: (err) => this.logger.error(err),
       ...(maxThinkingTokens !== undefined && { maxThinkingTokens }),
       ...userProvidedOptions,
+      env: {
+        ...userProvidedOptions?.env,
+        ...createEnvForGateway(this.gatewayAuthMeta),
+      },
       // Override certain fields that must be controlled by ACP
       cwd: params.cwd,
       includePartialMessages: true,
@@ -1357,6 +1396,19 @@ export class ClaudeAcpAgent implements Agent {
       configOptions,
     };
   }
+}
+
+function createEnvForGateway(gatewayMeta?: GatewayAuthMeta) {
+  if (!gatewayMeta) {
+    return {};
+  }
+  return {
+    ANTHROPIC_BASE_URL: gatewayMeta.gateway.baseUrl,
+    ANTHROPIC_CUSTOM_HEADERS: Object.entries(gatewayMeta.gateway.headers)
+      .map(([key, value]) => `${key}: ${value}`)
+      .join("\n"),
+    ANTHROPIC_AUTH_TOKEN: "", // Must be specified to bypass claude login requirement
+  };
 }
 
 function buildConfigOptions(
