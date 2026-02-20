@@ -50,15 +50,8 @@ ANTHROPIC_API_KEY=sk-... claude-agent-acp
 
 #### Single-file executable
 
-Pre-built single-file binaries are available on the [Releases](https://github.com/zed-industries/claude-agent-acp/releases) page for Linux, macOS, and Windows. These binaries bundle everything needed and don't require Node.js.
-
-Download the binary for your platform and run it with the `--acp` flag:
-
-```bash
-/path/to/claude-agent-acp --acp
-```
-
-Without `--acp`, the binary acts as a Claude Code CLI (used internally by the SDK).
+Pre-built single-file binaries are available on the [Releases](https://github.com/zed-industries/claude-agent-acp/releases) page for Linux, macOS, and Windows.
+These binaries bundle everything needed and don't require Node.js.
 
 ## License
 
