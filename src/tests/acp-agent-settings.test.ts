@@ -171,4 +171,51 @@ describe("ClaudeAcpAgent settings", () => {
       }),
     ).rejects.toThrow("Invalid permissions.defaultMode");
   });
+
+  it("resolves model aliases like opus[1m] to the correct model", async () => {
+    await fs.promises.writeFile(
+      path.join(tempDir, "settings.json"),
+      JSON.stringify({
+        model: "opus[1m]",
+      }),
+    );
+
+    const projectDir = path.join(tempDir, "project");
+    await fs.promises.mkdir(projectDir, { recursive: true });
+
+    const setModelSpy = vi.fn();
+    querySpy.mockImplementation(({ options }: any) => {
+      return {
+        initializationResult: async () => ({
+          models: [
+            {
+              value: "claude-opus-4-6",
+              displayName: "Claude Opus 4.6",
+              description: "Base",
+            },
+            {
+              value: "claude-opus-4-6-1m",
+              displayName: "Claude Opus 4.6 (1M)",
+              description: "Long context",
+            },
+          ],
+        }),
+        setModel: setModelSpy,
+        supportedCommands: async () => [],
+      } as any;
+    });
+
+    const { ClaudeAcpAgent } = await import("../acp-agent.js");
+    const agent: ClaudeAcpAgentType = new ClaudeAcpAgent(createMockClient());
+
+    const response = await (agent as any).createSession({
+      cwd: projectDir,
+      mcpServers: [],
+      _meta: { disableBuiltInTools: true },
+    });
+
+    expect(setModelSpy).toHaveBeenCalledWith("claude-opus-4-6-1m");
+    expect(response.models.currentModelId).toBe("claude-opus-4-6-1m");
+  });
+
 });
