@@ -230,6 +230,44 @@ function isStaticBinary(): boolean {
 const IS_ROOT = (process.geteuid?.() ?? process.getuid?.()) === 0;
 const ALLOW_BYPASS = !IS_ROOT || !!process.env.IS_SANDBOX;
 
+const PERMISSION_MODE_ALIASES: Record<string, PermissionMode> = {
+  default: "default",
+  acceptedits: "acceptEdits",
+  dontask: "dontAsk",
+  plan: "plan",
+  delegate: "delegate",
+  bypasspermissions: "bypassPermissions",
+  bypass: "bypassPermissions",
+};
+
+export function resolvePermissionMode(defaultMode?: unknown): PermissionMode {
+  if (defaultMode === undefined) {
+    return "default";
+  }
+
+  if (typeof defaultMode !== "string") {
+    throw new Error("Invalid permissions.defaultMode: expected a string.");
+  }
+
+  const normalized = defaultMode.trim().toLowerCase();
+  if (normalized === "") {
+    throw new Error("Invalid permissions.defaultMode: expected a non-empty string.");
+  }
+
+  const mapped = PERMISSION_MODE_ALIASES[normalized];
+  if (!mapped) {
+    throw new Error(`Invalid permissions.defaultMode: ${defaultMode}.`);
+  }
+
+  if (mapped === "bypassPermissions" && !ALLOW_BYPASS) {
+    throw new Error(
+      "Invalid permissions.defaultMode: bypassPermissions is not available when running as root.",
+    );
+  }
+
+  return mapped;
+}
+
 // Implement the ACP Agent interface
 export class ClaudeAcpAgent implements Agent {
   sessions: {
@@ -1082,7 +1120,9 @@ export class ClaudeAcpAgent implements Agent {
       }
     }
 
-    const permissionMode = "default";
+    const permissionMode = resolvePermissionMode(
+      settingsManager.getSettings().permissions?.defaultMode,
+    );
 
     // Extract options from _meta if provided
     const userProvidedOptions = (params._meta as NewSessionMeta | undefined)?.claudeCode?.options;

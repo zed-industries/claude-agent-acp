@@ -52,5 +52,43 @@ describe("SettingsManager", () => {
       settings = settingsManager.getSettings();
       expect(settings.model).toBe("claude-3-5-haiku");
     });
+
+    it("should merge permissions.defaultMode with later sources taking precedence", async () => {
+      const claudeDir = path.join(tempDir, ".claude");
+      await fs.promises.mkdir(claudeDir, { recursive: true });
+
+      await fs.promises.writeFile(
+        path.join(claudeDir, "settings.json"),
+        JSON.stringify({
+          permissions: {
+            defaultMode: "dontAsk",
+          },
+        }),
+      );
+
+      settingsManager = new SettingsManager(tempDir);
+      await settingsManager.initialize();
+
+      let settings = settingsManager.getSettings();
+      expect(settings.permissions?.defaultMode).toBe("dontAsk");
+
+      // Local settings override the mode
+      await fs.promises.writeFile(
+        path.join(claudeDir, "settings.local.json"),
+        JSON.stringify({
+          permissions: {
+            defaultMode: "plan",
+          },
+        }),
+      );
+
+      settingsManager.dispose();
+      settingsManager = new SettingsManager(tempDir);
+      await settingsManager.initialize();
+
+      settings = settingsManager.getSettings();
+      expect(settings.permissions?.defaultMode).toBe("plan");
+    });
+
   });
 });
