@@ -648,6 +648,11 @@ export class ClaudeAcpAgent implements Agent {
 
       switch (message.type) {
         case "system":
+          if (message.subtype === "compact_boundary") {
+            // We don't know the exact size, but since we compacted,
+            // we set it to zero. The client gets the exact size on the next message.
+            lastAssistantTotalUsage = 0;
+          }
           switch (message.subtype) {
             case "init":
               break;
@@ -684,7 +689,7 @@ export class ClaudeAcpAgent implements Agent {
             contextWindows.length > 0 ? Math.min(...contextWindows) : 200000;
 
           // Send usage_update notification
-          if (lastAssistantTotalUsage) {
+          if (lastAssistantTotalUsage !== null) {
             await this.client.sessionUpdate({
               sessionId: params.sessionId,
               update: {
