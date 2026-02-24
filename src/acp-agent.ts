@@ -148,6 +148,8 @@ type CumulativeUsage = {
   cacheReadInputTokens: number;
   cacheCreationInputTokens: number;
   totalCostUsd: number;
+  // The last assistant message's input_tokens — represents current context window usage
+  lastInputTokens: number;
 };
 
 type Session = {
@@ -688,6 +690,12 @@ export class ClaudeAcpAgent implements Agent {
             }
           }
 
+          // UsageUpdate.used represents current context window usage (tokens in context),
+          // not cumulative API tokens. Use the last assistant message's input_tokens,
+          // which reflects how many tokens were sent to the model on the most recent call.
+          // This correctly drops after compaction since the compacted context is smaller.
+          const currentContextUsed = session.cumulativeUsage.lastInputTokens;
+
           // Send final UsageUpdate with cost and context window
           await this.client.sessionUpdate({
             sessionId: params.sessionId,
@@ -698,7 +706,7 @@ export class ClaudeAcpAgent implements Agent {
                 currency: "USD",
               },
               size: contextWindow,
-              used: totalTokens,
+              used: currentContextUsed,
             },
           });
 
@@ -772,16 +780,21 @@ export class ClaudeAcpAgent implements Agent {
             session.cumulativeUsage.cacheReadInputTokens += u.cache_read_input_tokens ?? 0;
             session.cumulativeUsage.cacheCreationInputTokens += u.cache_creation_input_tokens ?? 0;
 
-            const cu = session.cumulativeUsage;
-            const totalTokens =
-              cu.inputTokens + cu.outputTokens + cu.cacheReadInputTokens + cu.cacheCreationInputTokens;
+            // Current context window usage = all input tokens sent in this API call,
+            // including cache hits. This represents the total conversation size and
+            // correctly drops after compaction since the compacted context is smaller.
+            const currentContextTokens =
+              (u.input_tokens ?? 0) +
+              (u.cache_read_input_tokens ?? 0) +
+              (u.cache_creation_input_tokens ?? 0);
+            session.cumulativeUsage.lastInputTokens = currentContextTokens;
 
             await this.client.sessionUpdate({
               sessionId: params.sessionId,
               update: {
                 sessionUpdate: "usage_update",
                 size: 0, // context window size not available per-turn
-                used: totalTokens,
+                used: currentContextTokens,
               },
             });
           }
@@ -1389,6 +1402,7 @@ export class ClaudeAcpAgent implements Agent {
         cacheReadInputTokens: 0,
         cacheCreationInputTokens: 0,
         totalCostUsd: 0,
+        lastInputTokens: 0,
       },
     };
 
