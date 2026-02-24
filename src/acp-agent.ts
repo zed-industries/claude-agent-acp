@@ -705,7 +705,7 @@ export class ClaudeAcpAgent implements Agent {
           }
 
           // Build the usage response
-          const buildUsageResponse = (): PromptResponse["usage"] => ({
+          const usage: PromptResponse["usage"] = {
             inputTokens: session.accumulatedUsage.inputTokens,
             outputTokens: session.accumulatedUsage.outputTokens,
             cachedReadTokens: session.accumulatedUsage.cachedReadTokens,
@@ -715,7 +715,7 @@ export class ClaudeAcpAgent implements Agent {
               session.accumulatedUsage.outputTokens +
               session.accumulatedUsage.cachedReadTokens +
               session.accumulatedUsage.cachedWriteTokens,
-          });
+          };
 
           switch (message.subtype) {
             case "success": {
@@ -725,7 +725,7 @@ export class ClaudeAcpAgent implements Agent {
               if (message.is_error) {
                 throw RequestError.internalError(undefined, message.result);
               }
-              return { stopReason: "end_turn", usage: buildUsageResponse() };
+              return { stopReason: "end_turn", usage };
             }
             case "error_during_execution":
               if (message.is_error) {
@@ -734,7 +734,7 @@ export class ClaudeAcpAgent implements Agent {
                   message.errors.join(", ") || message.subtype,
                 );
               }
-              return { stopReason: "end_turn", usage: buildUsageResponse() };
+              return { stopReason: "end_turn", usage };
             case "error_max_budget_usd":
             case "error_max_turns":
             case "error_max_structured_output_retries":
@@ -744,7 +744,7 @@ export class ClaudeAcpAgent implements Agent {
                   message.errors.join(", ") || message.subtype,
                 );
               }
-              return { stopReason: "max_turn_requests", usage: buildUsageResponse() };
+              return { stopReason: "max_turn_requests", usage };
             default:
               unreachable(message, this.logger);
               break;
