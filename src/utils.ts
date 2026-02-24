@@ -106,66 +106,9 @@ export function applyEnvironmentSettings(settings: ClaudeCodeSettings): void {
   }
 }
 
-export interface ExtractLinesResult {
-  content: string;
-  wasLimited: boolean;
-  linesRead: number;
-}
-
-/**
- * Extracts lines from file content with byte limit enforcement.
- *
- * @param fullContent - The complete file content
- * @param maxContentLength - Maximum number of UTF-16 Code Units to return
- * @returns Object containing extracted content and metadata
- */
-export function extractLinesWithByteLimit(
-  fullContent: string,
-  maxContentLength: number,
-): ExtractLinesResult {
-  if (fullContent === "") {
-    return {
-      content: "",
-      wasLimited: false,
-      linesRead: 1,
-    };
-  }
-
-  let linesSeen = 0;
-  let index = 0;
-  linesSeen = 0;
-
-  let contentLength = 0;
-  let wasLimited = false;
-
-  while (true) {
-    const nextIndex = fullContent.indexOf("\n", index);
-
-    if (nextIndex < 0) {
-      // Last line in file (no trailing newline)
-      if (linesSeen > 0 && fullContent.length > maxContentLength) {
-        wasLimited = true;
-        break;
-      }
-      linesSeen += 1;
-      contentLength = fullContent.length;
-      break;
-    } else {
-      // Line with newline - include up to the newline
-      const newContentLength = nextIndex + 1;
-      if (linesSeen > 0 && newContentLength > maxContentLength) {
-        wasLimited = true;
-        break;
-      }
-      linesSeen += 1;
-      contentLength = newContentLength;
-      index = newContentLength;
-    }
-  }
-
-  return {
-    content: fullContent.slice(0, contentLength),
-    wasLimited,
-    linesRead: linesSeen,
-  };
+// Helper to encode a path like Claude does:
+// - Unix: "/Users/test" -> "-Users-test"
+// - Windows: "C:\Users\test" -> "C--Users-test"
+export function encodeProjectPath(cwd: string): string {
+  return cwd.replace(/[^a-zA-Z0-9]/g, "-");
 }

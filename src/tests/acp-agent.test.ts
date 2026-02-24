@@ -17,10 +17,22 @@ import {
   WriteTextFileResponse,
 } from "@agentclientprotocol/sdk";
 import { nodeToWebWritable, nodeToWebReadable } from "../utils.js";
-import { markdownEscape, toolInfoFromToolUse, toolUpdateFromToolResult } from "../tools.js";
+import {
+  markdownEscape,
+  toolInfoFromToolUse,
+  toolUpdateFromToolResult,
+  toolUpdateFromEditToolResponse,
+} from "../tools.js";
 import { toAcpNotifications, promptToClaude } from "../acp-agent.js";
 import { query, SDKAssistantMessage } from "@anthropic-ai/claude-agent-sdk";
 import { randomUUID } from "crypto";
+import type {
+  BetaToolResultBlockParam,
+  BetaToolSearchToolResultBlockParam,
+  BetaWebSearchToolResultBlockParam,
+  BetaWebFetchToolResultBlockParam,
+  BetaCodeExecutionToolResultBlockParam,
+} from "@anthropic-ai/sdk/resources/beta.mjs";
 
 describe.skipIf(!process.env.RUN_INTEGRATION_TESTS)("ACP subprocess integration", () => {
   let child: ReturnType<typeof spawn>;
@@ -253,7 +265,7 @@ describe("tool conversions", () => {
 
     expect(toolInfoFromToolUse(tool_use)).toStrictEqual({
       kind: "execute",
-      title: "`rm README.md.rm`",
+      title: "rm README.md.rm",
       content: [
         {
           content: {
@@ -312,24 +324,6 @@ describe("tool conversions", () => {
     });
   });
 
-  it("should handle LS tool calls", () => {
-    const tool_use = {
-      type: "tool_use",
-      id: "toolu_01EEqsX7Eb9hpx87KAHVPTey",
-      name: "LS",
-      input: {
-        path: "/Users/test/github/claude-code-acp",
-      },
-    };
-
-    expect(toolInfoFromToolUse(tool_use)).toStrictEqual({
-      kind: "search",
-      title: "List the `/Users/test/github/claude-code-acp` directory's contents",
-      content: [],
-      locations: [],
-    });
-  });
-
   it("should handle Grep tool calls", () => {
     const tool_use = {
       type: "tool_use",
@@ -373,11 +367,11 @@ describe("tool conversions", () => {
     });
   });
 
-  it("should handle mcp__acp__Write tool calls", () => {
+  it("should handle Write tool calls", () => {
     const tool_use = {
       type: "tool_use",
       id: "toolu_01GHI789JKL456",
-      name: "mcp__acp__Write",
+      name: "Write",
       input: {
         file_path: "/Users/test/project/config.json",
         content: '{"version": "1.0.0"}',
@@ -399,6 +393,81 @@ describe("tool conversions", () => {
     });
   });
 
+  it("should handle Edit tool calls", () => {
+    const tool_use = {
+      type: "tool_use",
+      id: "toolu_01EDIT123",
+      name: "Edit",
+      input: {
+        file_path: "/Users/test/project/test.txt",
+        old_string: "old text",
+        new_string: "new text",
+      },
+    };
+
+    expect(toolInfoFromToolUse(tool_use)).toStrictEqual({
+      kind: "edit",
+      title: "Edit /Users/test/project/test.txt",
+      content: [
+        {
+          type: "diff",
+          path: "/Users/test/project/test.txt",
+          oldText: "old text",
+          newText: "new text",
+        },
+      ],
+      locations: [{ path: "/Users/test/project/test.txt" }],
+    });
+  });
+
+  it("should handle Edit tool calls with replace_all", () => {
+    const tool_use = {
+      type: "tool_use",
+      id: "toolu_01EDIT456",
+      name: "Edit",
+      input: {
+        replace_all: false,
+        file_path: "/Users/benbrandt/github/codex-acp/src/thread.rs",
+        old_string:
+          "struct PromptState {\n    active_command: Option<ActiveCommand>,\n    active_web_search: Option<String>,\n}",
+        new_string:
+          "struct PromptState {\n    active_commands: HashMap<String, ActiveCommand>,\n    active_web_search: Option<String>,\n}",
+      },
+    };
+
+    expect(toolInfoFromToolUse(tool_use)).toStrictEqual({
+      kind: "edit",
+      title: "Edit /Users/benbrandt/github/codex-acp/src/thread.rs",
+      content: [
+        {
+          type: "diff",
+          path: "/Users/benbrandt/github/codex-acp/src/thread.rs",
+          oldText:
+            "struct PromptState {\n    active_command: Option<ActiveCommand>,\n    active_web_search: Option<String>,\n}",
+          newText:
+            "struct PromptState {\n    active_commands: HashMap<String, ActiveCommand>,\n    active_web_search: Option<String>,\n}",
+        },
+      ],
+      locations: [{ path: "/Users/benbrandt/github/codex-acp/src/thread.rs" }],
+    });
+  });
+
+  it("should handle Edit tool calls without file_path", () => {
+    const tool_use = {
+      type: "tool_use",
+      id: "toolu_01EDIT789",
+      name: "Edit",
+      input: {},
+    };
+
+    expect(toolInfoFromToolUse(tool_use)).toStrictEqual({
+      kind: "edit",
+      title: "Edit",
+      content: [],
+      locations: [],
+    });
+  });
+
   it("should handle Read tool calls", () => {
     const tool_use = {
       type: "tool_use",
@@ -411,17 +480,17 @@ describe("tool conversions", () => {
 
     expect(toolInfoFromToolUse(tool_use)).toStrictEqual({
       kind: "read",
-      title: "Read File",
+      title: "Read /Users/test/project/readme.md",
       content: [],
-      locations: [{ path: "/Users/test/project/readme.md", line: 0 }],
+      locations: [{ path: "/Users/test/project/readme.md", line: 1 }],
     });
   });
 
-  it("should handle mcp__acp__Read tool calls", () => {
+  it("should handle Read tool calls", () => {
     const tool_use = {
       type: "tool_use",
       id: "toolu_01YZA789BCD123",
-      name: "mcp__acp__Read",
+      name: "Read",
       input: {
         file_path: "/Users/test/project/data.json",
       },
@@ -431,15 +500,15 @@ describe("tool conversions", () => {
       kind: "read",
       title: "Read /Users/test/project/data.json",
       content: [],
-      locations: [{ path: "/Users/test/project/data.json", line: 0 }],
+      locations: [{ path: "/Users/test/project/data.json", line: 1 }],
     });
   });
 
-  it("should handle mcp__acp__Read with limit", () => {
+  it("should handle Read with limit", () => {
     const tool_use = {
       type: "tool_use",
       id: "toolu_01EFG456HIJ789",
-      name: "mcp__acp__Read",
+      name: "Read",
       input: {
         file_path: "/Users/test/project/large.txt",
         limit: 100,
@@ -450,15 +519,15 @@ describe("tool conversions", () => {
       kind: "read",
       title: "Read /Users/test/project/large.txt (1 - 100)",
       content: [],
-      locations: [{ path: "/Users/test/project/large.txt", line: 0 }],
+      locations: [{ path: "/Users/test/project/large.txt", line: 1 }],
     });
   });
 
-  it("should handle mcp__acp__Read with offset and limit", () => {
+  it("should handle Read with offset and limit", () => {
     const tool_use = {
       type: "tool_use",
       id: "toolu_01KLM789NOP456",
-      name: "mcp__acp__Read",
+      name: "Read",
       input: {
         file_path: "/Users/test/project/large.txt",
         offset: 50,
@@ -468,17 +537,17 @@ describe("tool conversions", () => {
 
     expect(toolInfoFromToolUse(tool_use)).toStrictEqual({
       kind: "read",
-      title: "Read /Users/test/project/large.txt (51 - 150)",
+      title: "Read /Users/test/project/large.txt (50 - 149)",
       content: [],
       locations: [{ path: "/Users/test/project/large.txt", line: 50 }],
     });
   });
 
-  it("should handle mcp__acp__Read with only offset", () => {
+  it("should handle Read with only offset", () => {
     const tool_use = {
       type: "tool_use",
       id: "toolu_01QRS123TUV789",
-      name: "mcp__acp__Read",
+      name: "Read",
       input: {
         file_path: "/Users/test/project/large.txt",
         offset: 200,
@@ -487,43 +556,9 @@ describe("tool conversions", () => {
 
     expect(toolInfoFromToolUse(tool_use)).toStrictEqual({
       kind: "read",
-      title: "Read /Users/test/project/large.txt (from line 201)",
+      title: "Read /Users/test/project/large.txt (from line 200)",
       content: [],
       locations: [{ path: "/Users/test/project/large.txt", line: 200 }],
-    });
-  });
-
-  it("should handle KillBash entries", () => {
-    const tool_use = {
-      type: "tool_use",
-      id: "toolu_01PhLms5fuvmdjy2bb6dfUKT",
-      name: "KillShell",
-      input: {
-        shell_id: "bash_1",
-      },
-    };
-
-    expect(toolInfoFromToolUse(tool_use)).toStrictEqual({
-      kind: "execute",
-      title: `Kill Process`,
-      content: [],
-    });
-  });
-
-  it("should handle BashOutput entries", () => {
-    const tool_use = {
-      type: "tool_use",
-      id: "toolu_01SJUWPtj1QspgANgtpqGPuN",
-      name: "BashOutput",
-      input: {
-        bash_id: "bash_1",
-      },
-    };
-
-    expect(toolInfoFromToolUse(tool_use)).toStrictEqual({
-      kind: "execute",
-      title: `Tail Logs`,
-      content: [],
     });
   });
 
@@ -600,6 +635,9 @@ describe("tool conversions", () => {
           output_tokens: 1,
           service_tier: "standard",
           server_tool_use: null,
+          inference_geo: null,
+          iterations: null,
+          speed: null,
         },
         context_management: null,
       },
@@ -672,7 +710,7 @@ describe("tool conversions", () => {
     const toolUse = {
       type: "tool_use",
       id: "toolu_01MNO345",
-      name: "mcp__acp__Edit",
+      name: "Edit",
       input: {
         file_path: "/Users/test/project/test.txt",
         old_string: "old",
@@ -702,7 +740,7 @@ describe("tool conversions", () => {
     const toolUse = {
       type: "tool_use",
       id: "toolu_01MNO345",
-      name: "mcp__acp__Edit",
+      name: "Edit",
       input: {
         file_path: "/Users/test/project/test.txt",
         old_string: "old",
@@ -733,6 +771,320 @@ describe("tool conversions", () => {
         },
       ],
     });
+  });
+
+  it("should transform tool_reference content to valid ACP content", () => {
+    const toolUse = {
+      type: "tool_use",
+      id: "toolu_01MNO345",
+      name: "ToolSearch",
+      input: { query: "test" },
+    };
+
+    const toolResult: BetaToolResultBlockParam = {
+      content: [
+        {
+          type: "tool_reference",
+          tool_name: "some_discovered_tool",
+        },
+      ],
+      tool_use_id: "toolu_01MNO345",
+      is_error: false,
+      type: "tool_result",
+    };
+
+    const update = toolUpdateFromToolResult(toolResult, toolUse);
+
+    expect(update).toEqual({
+      content: [
+        {
+          type: "content",
+          content: { type: "text", text: "Tool: some_discovered_tool" },
+        },
+      ],
+    });
+  });
+
+  it("should transform web_search_result content to valid ACP content", () => {
+    const toolUse = {
+      type: "tool_use",
+      id: "toolu_01MNO345",
+      name: "WebSearch",
+      input: { query: "test" },
+    };
+
+    const toolResult: BetaWebSearchToolResultBlockParam = {
+      content: [
+        {
+          type: "web_search_result",
+          title: "Test Result",
+          url: "https://example.com",
+          encrypted_content: "...",
+          page_age: null,
+        },
+      ],
+      tool_use_id: "toolu_01MNO345",
+      type: "web_search_tool_result",
+    };
+
+    const update = toolUpdateFromToolResult(toolResult, toolUse);
+
+    expect(update).toEqual({
+      content: [
+        {
+          type: "content",
+          content: { type: "text", text: "Test Result (https://example.com)" },
+        },
+      ],
+    });
+  });
+
+  it("should transform web_search_tool_result_error to valid ACP content", () => {
+    const toolUse = {
+      type: "tool_use",
+      id: "toolu_01MNO345",
+      name: "WebSearch",
+      input: { query: "test" },
+    };
+
+    const toolResult: BetaWebSearchToolResultBlockParam = {
+      content: {
+        type: "web_search_tool_result_error",
+        error_code: "unavailable",
+      },
+      tool_use_id: "toolu_01MNO345",
+      type: "web_search_tool_result",
+    };
+
+    const update = toolUpdateFromToolResult(toolResult, toolUse);
+
+    expect(update).toEqual({
+      content: [
+        {
+          type: "content",
+          content: { type: "text", text: "Error: unavailable" },
+        },
+      ],
+    });
+  });
+
+  it("should transform code_execution_result content to valid ACP content", () => {
+    const toolUse = {
+      type: "tool_use",
+      id: "toolu_01MNO345",
+      name: "CodeExecution",
+      input: {},
+    };
+
+    const toolResult: BetaCodeExecutionToolResultBlockParam = {
+      content: {
+        type: "code_execution_result",
+        stdout: "Hello World",
+        stderr: "",
+        return_code: 0,
+        content: [],
+      },
+      tool_use_id: "toolu_01MNO345",
+      type: "code_execution_tool_result",
+    };
+
+    const update = toolUpdateFromToolResult(toolResult, toolUse);
+
+    expect(update).toEqual({
+      content: [
+        {
+          type: "content",
+          content: { type: "text", text: "Output: Hello World" },
+        },
+      ],
+    });
+  });
+
+  it("should transform web_fetch_result content to valid ACP content", () => {
+    const toolUse = {
+      type: "tool_use",
+      id: "toolu_01MNO345",
+      name: "WebFetch",
+      input: { url: "https://example.com" },
+    };
+
+    const toolResult: BetaWebFetchToolResultBlockParam = {
+      content: {
+        type: "web_fetch_result",
+        url: "https://example.com",
+        content: {
+          type: "document",
+          citations: null,
+          title: null,
+          source: { type: "text", media_type: "text/plain", data: "Page content here" },
+        },
+      },
+      tool_use_id: "toolu_01MNO345",
+      type: "web_fetch_tool_result",
+    };
+
+    const update = toolUpdateFromToolResult(toolResult, toolUse);
+
+    expect(update).toEqual({
+      content: [
+        {
+          type: "content",
+          content: { type: "text", text: "Fetched: https://example.com" },
+        },
+      ],
+    });
+  });
+
+  it("should transform tool_search_tool_search_result to valid ACP content", () => {
+    const toolUse = {
+      type: "tool_use",
+      id: "toolu_01MNO345",
+      name: "ToolSearch",
+      input: { query: "test" },
+    };
+
+    const toolResult: BetaToolSearchToolResultBlockParam = {
+      content: {
+        type: "tool_search_tool_search_result",
+        tool_references: [
+          { type: "tool_reference", tool_name: "tool_a" },
+          { type: "tool_reference", tool_name: "tool_b" },
+        ],
+      },
+      tool_use_id: "toolu_01MNO345",
+      type: "tool_search_tool_result",
+    };
+
+    const update = toolUpdateFromToolResult(toolResult, toolUse);
+
+    expect(update).toEqual({
+      content: [
+        {
+          type: "content",
+          content: { type: "text", text: "Tools found: tool_a, tool_b" },
+        },
+      ],
+    });
+  });
+});
+
+describe("toolUpdateFromEditToolResponse", () => {
+  it("should return empty for non-object input", () => {
+    expect(toolUpdateFromEditToolResponse(null)).toEqual({});
+    expect(toolUpdateFromEditToolResponse(undefined)).toEqual({});
+    expect(toolUpdateFromEditToolResponse("string")).toEqual({});
+  });
+
+  it("should return empty when filePath or structuredPatch is missing", () => {
+    expect(toolUpdateFromEditToolResponse({})).toEqual({});
+    expect(toolUpdateFromEditToolResponse({ filePath: "/foo.ts" })).toEqual({});
+    expect(toolUpdateFromEditToolResponse({ structuredPatch: [] })).toEqual({});
+  });
+
+  it("should build diff content from a single-hunk structuredPatch", () => {
+    const toolResponse = {
+      filePath: "/Users/test/project/test.txt",
+      structuredPatch: [
+        {
+          oldStart: 1,
+          oldLines: 3,
+          newStart: 1,
+          newLines: 3,
+          lines: [" context before", "-old line", "+new line", " context after"],
+        },
+      ],
+    };
+
+    expect(toolUpdateFromEditToolResponse(toolResponse)).toEqual({
+      content: [
+        {
+          type: "diff",
+          path: "/Users/test/project/test.txt",
+          oldText: "context before\nold line\ncontext after",
+          newText: "context before\nnew line\ncontext after",
+        },
+      ],
+      locations: [{ path: "/Users/test/project/test.txt", line: 1 }],
+    });
+  });
+
+  it("should build multiple diff content blocks for replaceAll with multiple hunks", () => {
+    const toolResponse = {
+      filePath: "/Users/test/project/file.ts",
+      structuredPatch: [
+        {
+          oldStart: 5,
+          oldLines: 1,
+          newStart: 5,
+          newLines: 1,
+          lines: ["-oldValue", "+newValue"],
+        },
+        {
+          oldStart: 20,
+          oldLines: 1,
+          newStart: 20,
+          newLines: 1,
+          lines: ["-oldValue", "+newValue"],
+        },
+      ],
+    };
+
+    expect(toolUpdateFromEditToolResponse(toolResponse)).toEqual({
+      content: [
+        {
+          type: "diff",
+          path: "/Users/test/project/file.ts",
+          oldText: "oldValue",
+          newText: "newValue",
+        },
+        {
+          type: "diff",
+          path: "/Users/test/project/file.ts",
+          oldText: "oldValue",
+          newText: "newValue",
+        },
+      ],
+      locations: [
+        { path: "/Users/test/project/file.ts", line: 5 },
+        { path: "/Users/test/project/file.ts", line: 20 },
+      ],
+    });
+  });
+
+  it("should handle deletion (newText becomes empty string)", () => {
+    const toolResponse = {
+      filePath: "/Users/test/project/file.ts",
+      structuredPatch: [
+        {
+          oldStart: 10,
+          oldLines: 2,
+          newStart: 10,
+          newLines: 1,
+          lines: [" context", "-removed line"],
+        },
+      ],
+    };
+
+    expect(toolUpdateFromEditToolResponse(toolResponse)).toEqual({
+      content: [
+        {
+          type: "diff",
+          path: "/Users/test/project/file.ts",
+          oldText: "context\nremoved line",
+          newText: "context",
+        },
+      ],
+      locations: [{ path: "/Users/test/project/file.ts", line: 10 }],
+    });
+  });
+
+  it("should return empty for empty structuredPatch array", () => {
+    const toolResponse = {
+      filePath: "/Users/test/project/file.ts",
+      structuredPatch: [],
+    };
+
+    expect(toolUpdateFromEditToolResponse(toolResponse)).toEqual({});
   });
 });
 
@@ -800,7 +1152,7 @@ describe.skipIf(!process.env.RUN_INTEGRATION_TESTS)("SDK behavior", () => {
       prompt: "hi",
       options: {
         systemPrompt: { type: "preset", preset: "claude_code" },
-        extraArgs: { "session-id": sessionId },
+        sessionId,
         settingSources: ["user", "project", "local"],
         includePartialMessages: true,
       },
@@ -831,13 +1183,13 @@ describe("permission requests", () => {
           name: "Bash",
           input: { command: "ls -la", description: "List files" },
         },
-        expectedTitlePart: "`ls -la`",
+        expectedTitlePart: "ls -la",
       },
       {
         toolUse: {
           type: "tool_use" as const,
           id: "test-3",
-          name: "mcp__acp__Read",
+          name: "Read",
           input: { file_path: "/test/data.json" },
         },
         expectedTitlePart: "/test/data.json",
@@ -853,17 +1205,26 @@ describe("permission requests", () => {
       expect(toolInfo.title).toContain(testCase.expectedTitlePart);
 
       // Verify the structure that our fix creates for requestPermission
+      // We now spread the full toolInfo (title, kind, content, locations)
       const requestStructure = {
         toolCall: {
           toolCallId: testCase.toolUse.id,
           rawInput: testCase.toolUse.input,
-          title: toolInfo.title, // This is what commit 1785d86 adds
+          ...toolInfo,
         },
       };
 
       // Ensure the title field is present and populated
       expect(requestStructure.toolCall.title).toBeDefined();
       expect(requestStructure.toolCall.title).toContain(testCase.expectedTitlePart);
+
+      // Ensure kind is included so the client can render appropriate UI
+      expect(requestStructure.toolCall.kind).toBeDefined();
+      expect(typeof requestStructure.toolCall.kind).toBe("string");
+
+      // Ensure content is included so the client always has tool call details
+      expect(requestStructure.toolCall.content).toBeDefined();
+      expect(Array.isArray(requestStructure.toolCall.content)).toBe(true);
     }
   });
 });

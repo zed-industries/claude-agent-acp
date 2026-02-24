@@ -1,14 +1,14 @@
 {
-  "name": "@zed-industries/claude-code-acp",
+  "name": "@zed-industries/claude-agent-acp",
   "publishConfig": {
     "access": "public"
   },
-  "version": "0.13.1",
-  "description": "An ACP-compatible coding agent powered by the Claude Code SDK (TypeScript)",
+  "version": "0.18.0",
+  "description": "An ACP-compatible coding agent powered by the Claude Agent SDK (TypeScript)",
   "main": "dist/lib.js",
   "types": "dist/lib.d.ts",
   "bin": {
-    "claude-code-acp": "./dist/index.js"
+    "claude-agent-acp": "dist/index.js"
   },
   "type": "module",
   "exports": {
@@ -49,31 +49,29 @@
     "sdk",
     "code"
   ],
-  "homepage": "https://github.com/zed-industries/claude-code-acp#readme",
+  "homepage": "https://github.com/zed-industries/claude-agent-acp#readme",
   "bugs": {
-    "url": "https://github.com/zed-industries/claude-code-acp/issues"
+    "url": "https://github.com/zed-industries/claude-agent-acp/issues"
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/zed-industries/claude-code-acp.git"
+    "url": "git+https://github.com/zed-industries/claude-agent-acp.git"
   },
   "author": "Zed Industries",
   "license": "Apache-2.0",
   "dependencies": {
-    "@agentclientprotocol/sdk": "file:../acp-ts-sdk",
-    "@anthropic-ai/claude-agent-sdk": "0.2.19",
-    "@modelcontextprotocol/sdk": "1.25.3",
-    "diff": "8.0.3",
-    "minimatch": "10.1.1"
+    "@agentclientprotocol/sdk": "0.14.1",
+    "@anthropic-ai/claude-agent-sdk": "0.2.45"
   },
   "devDependencies": {
-    "@anthropic-ai/sdk": "0.71.2",
-    "@types/node": "25.0.10",
-    "@typescript-eslint/eslint-plugin": "8.53.1",
-    "@typescript-eslint/parser": "8.53.1",
-    "eslint": "9.39.2",
+    "@anthropic-ai/sdk": "0.76.0",
+    "@eslint/js": "10.0.1",
+    "@types/node": "25.2.3",
+    "@typescript-eslint/eslint-plugin": "8.56.0",
+    "@typescript-eslint/parser": "8.56.0",
+    "eslint": "10.0.0",
     "eslint-config-prettier": "10.1.8",
-    "globals": "17.1.0",
+    "globals": "17.3.0",
     "prettier": "3.8.1",
     "ts-node": "10.9.2",
     "typescript": "5.9.3",
