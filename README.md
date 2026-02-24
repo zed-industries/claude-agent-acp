@@ -48,6 +48,12 @@ You can then use `claude-agent-acp` as a regular ACP agent:
 ANTHROPIC_API_KEY=sk-... claude-agent-acp
 ```
 
+#### Homebrew
+
+Claude Agent is also available via Homebrew:
+
+`brew install claude-agent-acp`
+
 #### Single-file executable
 
 Pre-built single-file binaries are available on the [Releases](https://github.com/zed-industries/claude-agent-acp/releases) page for Linux, macOS, and Windows.
