@@ -142,6 +142,14 @@ export interface Logger {
   error: (...args: any[]) => void;
 }
 
+type CumulativeUsage = {
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadInputTokens: number;
+  cacheCreationInputTokens: number;
+  totalCostUsd: number;
+};
+
 type Session = {
   query: Query;
   input: Pushable<SDKUserMessage>;
@@ -149,6 +157,7 @@ type Session = {
   permissionMode: PermissionMode;
   settingsManager: SettingsManager;
   configOptions: SessionConfigOption[];
+  cumulativeUsage: CumulativeUsage;
 };
 
 type SessionHistoryEntry = {
@@ -617,7 +626,8 @@ export class ClaudeAcpAgent implements Agent {
 
     this.sessions[params.sessionId].cancelled = false;
 
-    const { query, input } = this.sessions[params.sessionId];
+    const session = this.sessions[params.sessionId];
+    const { query, input } = session;
 
     input.push(promptToClaude(params));
     while (true) {
@@ -655,6 +665,52 @@ export class ClaudeAcpAgent implements Agent {
             return { stopReason: "cancelled" };
           }
 
+          // Extract final usage from the result message
+          const resultUsage = message.usage;
+          const resultCostUsd = message.total_cost_usd;
+          const resultModelUsage = message.modelUsage;
+
+          // Update cumulative cost from the authoritative result
+          session.cumulativeUsage.totalCostUsd = resultCostUsd;
+
+          // Use the result's NonNullableUsage for accurate totals
+          const totalInputTokens = resultUsage.input_tokens;
+          const totalOutputTokens = resultUsage.output_tokens;
+          const totalCacheRead = resultUsage.cache_read_input_tokens;
+          const totalCacheCreation = resultUsage.cache_creation_input_tokens;
+          const totalTokens = totalInputTokens + totalOutputTokens + totalCacheRead + totalCacheCreation;
+
+          // Determine context window from modelUsage
+          let contextWindow = 0;
+          for (const model of Object.values(resultModelUsage)) {
+            if (model.contextWindow > contextWindow) {
+              contextWindow = model.contextWindow;
+            }
+          }
+
+          // Send final UsageUpdate with cost and context window
+          await this.client.sessionUpdate({
+            sessionId: params.sessionId,
+            update: {
+              sessionUpdate: "usage_update",
+              cost: {
+                amount: resultCostUsd,
+                currency: "USD",
+              },
+              size: contextWindow,
+              used: totalTokens,
+            },
+          });
+
+          // Build ACP Usage for PromptResponse
+          const acpUsage = {
+            inputTokens: totalInputTokens,
+            outputTokens: totalOutputTokens,
+            cachedReadTokens: totalCacheRead,
+            cachedWriteTokens: totalCacheCreation,
+            totalTokens: totalTokens,
+          };
+
           switch (message.subtype) {
             case "success": {
               if (message.result.includes("Please run /login")) {
@@ -663,7 +719,7 @@ export class ClaudeAcpAgent implements Agent {
               if (message.is_error) {
                 throw RequestError.internalError(undefined, message.result);
               }
-              return { stopReason: "end_turn" };
+              return { stopReason: "end_turn", usage: acpUsage };
             }
             case "error_during_execution":
               if (message.is_error) {
@@ -672,7 +728,7 @@ export class ClaudeAcpAgent implements Agent {
                   message.errors.join(", ") || message.subtype,
                 );
               }
-              return { stopReason: "end_turn" };
+              return { stopReason: "end_turn", usage: acpUsage };
             case "error_max_budget_usd":
             case "error_max_turns":
             case "error_max_structured_output_retries":
@@ -682,7 +738,7 @@ export class ClaudeAcpAgent implements Agent {
                   message.errors.join(", ") || message.subtype,
                 );
               }
-              return { stopReason: "max_turn_requests" };
+              return { stopReason: "max_turn_requests", usage: acpUsage };
             default:
               unreachable(message, this.logger);
               break;
@@ -706,6 +762,28 @@ export class ClaudeAcpAgent implements Agent {
         case "assistant": {
           if (this.sessions[params.sessionId].cancelled) {
             break;
+          }
+
+          // Track per-turn usage from assistant messages
+          if (message.type === "assistant" && message.message.usage) {
+            const u = message.message.usage;
+            session.cumulativeUsage.inputTokens += u.input_tokens ?? 0;
+            session.cumulativeUsage.outputTokens += u.output_tokens ?? 0;
+            session.cumulativeUsage.cacheReadInputTokens += u.cache_read_input_tokens ?? 0;
+            session.cumulativeUsage.cacheCreationInputTokens += u.cache_creation_input_tokens ?? 0;
+
+            const cu = session.cumulativeUsage;
+            const totalTokens =
+              cu.inputTokens + cu.outputTokens + cu.cacheReadInputTokens + cu.cacheCreationInputTokens;
+
+            await this.client.sessionUpdate({
+              sessionId: params.sessionId,
+              update: {
+                sessionUpdate: "usage_update",
+                size: 0, // context window size not available per-turn
+                used: totalTokens,
+              },
+            });
           }
 
           // Slash commands like /compact can generate invalid output... doesn't match
@@ -1305,6 +1383,13 @@ export class ClaudeAcpAgent implements Agent {
       permissionMode,
       settingsManager,
       configOptions: [],
+      cumulativeUsage: {
+        inputTokens: 0,
+        outputTokens: 0,
+        cacheReadInputTokens: 0,
+        cacheCreationInputTokens: 0,
+        totalCostUsd: 0,
+      },
     };
 
     const initializationResult = await q.initializationResult();
