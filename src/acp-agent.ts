@@ -684,18 +684,20 @@ export class ClaudeAcpAgent implements Agent {
             contextWindows.length > 0 ? Math.min(...contextWindows) : 200000;
 
           // Send usage_update notification
-          await this.client.sessionUpdate({
-            sessionId: params.sessionId,
-            update: {
-              sessionUpdate: "usage_update",
-              used: lastAssistantTotalUsage ?? 0,
-              size: contextWindowSize,
-              cost: {
-                amount: message.total_cost_usd,
-                currency: "USD",
+          if (lastAssistantTotalUsage) {
+            await this.client.sessionUpdate({
+              sessionId: params.sessionId,
+              update: {
+                sessionUpdate: "usage_update",
+                used: lastAssistantTotalUsage,
+                size: contextWindowSize,
+                cost: {
+                  amount: message.total_cost_usd,
+                  currency: "USD",
+                },
               },
-            },
-          });
+            });
+          }
 
           // Build the usage response
           const buildUsageResponse = (): PromptResponse["usage"] => ({
@@ -763,12 +765,14 @@ export class ClaudeAcpAgent implements Agent {
             break;
           }
 
-          if (message.usage) {
+          // Store latest assistant usage (excluding subagents)
+          if ((message.message as any).usage && message.parent_tool_use_id === null) {
+            const messageWithUsage = (message.message as unknown as SDKResultMessage);
             lastAssistantTotalUsage =
-              message.usage.input_tokens +
-              message.usage.output_tokens +
-              message.usage.cache_read_input_tokens +
-              message.usage.cache_creation_input_tokens;
+              messageWithUsage.usage.input_tokens +
+              messageWithUsage.usage.output_tokens +
+              messageWithUsage.usage.cache_read_input_tokens +
+              messageWithUsage.usage.cache_creation_input_tokens;
           }
 
           // Slash commands like /compact can generate invalid output... doesn't match
