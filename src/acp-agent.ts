@@ -270,6 +270,8 @@ export class ClaudeAcpAgent implements Agent {
       cachedWriteTokens: 0,
     };
 
+    let lastAssistantTotalUsage: number | null = null;
+
     const { query, input } = this.sessions[params.sessionId];
 
     input.push(promptToClaude(params));
@@ -318,17 +320,11 @@ export class ClaudeAcpAgent implements Agent {
             contextWindows.length > 0 ? Math.min(...contextWindows) : 200000;
 
           // Send usage_update notification
-          const totalUsedTokens =
-            message.usage.input_tokens +
-            message.usage.output_tokens +
-            message.usage.cache_read_input_tokens +
-            message.usage.cache_creation_input_tokens;
-
           await this.client.sessionUpdate({
             sessionId: params.sessionId,
             update: {
               sessionUpdate: "usage_update",
-              used: totalUsedTokens,
+              used: lastAssistantTotalUsage ?? 0,
               size: contextWindowSize,
               cost: {
                 amount: message.total_cost_usd,
@@ -402,7 +398,13 @@ export class ClaudeAcpAgent implements Agent {
             break;
           }
 
-          console.error("eyooooo", JSON.stringify(message));
+          if (message.usage) {
+            lastAssistantTotalUsage =
+              message.usage.input_tokens +
+              message.usage.output_tokens +
+              message.usage.cache_read_input_tokens +
+              message.usage.cache_creation_input_tokens;
+          }
 
           // Slash commands like /compact can generate invalid output... doesn't match
           // their own docs: https://docs.anthropic.com/en/docs/claude-code/sdk/sdk-slash-commands#%2Fcompact-compact-conversation-history
@@ -743,10 +745,6 @@ export class ClaudeAcpAgent implements Agent {
     const options: Options = {
       systemPrompt,
       settingSources: ["user", "project", "local"],
-      stderr: (err) => {
-        console.error("eyo something from claude", err);
-        this.logger.error(err)
-      },
       ...(maxThinkingTokens !== undefined && { maxThinkingTokens }),
       ...userProvidedOptions,
       // Override certain fields that must be controlled by ACP
