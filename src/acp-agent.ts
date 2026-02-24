@@ -772,7 +772,7 @@ export class ClaudeAcpAgent implements Agent {
 
           // Store latest assistant usage (excluding subagents)
           if ((message.message as any).usage && message.parent_tool_use_id === null) {
-            const messageWithUsage = (message.message as unknown as SDKResultMessage);
+            const messageWithUsage = message.message as unknown as SDKResultMessage;
             lastAssistantTotalUsage =
               messageWithUsage.usage.input_tokens +
               messageWithUsage.usage.output_tokens +
