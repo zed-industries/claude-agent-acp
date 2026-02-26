@@ -251,6 +251,10 @@ function isStaticBinary(): boolean {
   return process.env.CLAUDE_AGENT_ACP_IS_SINGLE_FILE_BUN !== undefined;
 }
 
+function shouldHideClaudeAuth(): boolean {
+  return process.argv.includes("--hide-claude-auth");
+}
+
 // Bypass Permissions doesn't work if we are a root/sudo user
 const IS_ROOT = (process.geteuid?.() ?? process.getuid?.()) === 0;
 const ALLOW_BYPASS = !IS_ROOT || !!process.env.IS_SANDBOX;
@@ -342,7 +346,7 @@ export class ClaudeAcpAgent implements Agent {
         title: "Claude Agent",
         version: packageJson.version,
       },
-      authMethods: [authMethod, gatewayAuthMethod],
+      authMethods: shouldHideClaudeAuth() ? [gatewayAuthMethod] : [authMethod, gatewayAuthMethod],
     };
   }
 

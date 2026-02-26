@@ -1,8 +1,22 @@
-import { describe, expect, it, Mock, vi } from "vitest";
+import { describe, expect, it, Mock, vi, afterEach, beforeEach } from "vitest";
 import { ClaudeAcpAgent } from "../acp-agent.js";
 import { AgentSideConnection } from "@agentclientprotocol/sdk";
 
 describe("authorization", () => {
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    //await all pending events like
+    vi.runAllTimers();
+    vi.useRealTimers();
+
+    vi.unstubAllGlobals();
+    vi.resetAllMocks();
+  });
+
   async function createAgentMock(): Promise<[ClaudeAcpAgent, Mock]> {
     const mockQuery = vi.hoisted(() =>
       vi.fn(() => ({
@@ -68,6 +82,32 @@ describe("authorization", () => {
           },
         }),
       }),
+    );
+  });
+
+  it("hide claude authentication", async () => {
+    const [agent] = await createAgentMock();
+    vi.stubGlobal("process", { ...process, argv: ['--hide-claude-auth'] });
+
+    const initializeResponse = await agent.initialize({
+      protocolVersion: 1,
+      clientCapabilities: {},
+    });
+    expect(initializeResponse.authMethods).not.toContainEqual(
+      expect.objectContaining({ id: "claude-login" }),
+    );
+  });
+
+  it("show claude authentication", async () => {
+    const [agent] = await createAgentMock();
+
+    const initializeResponse = await agent.initialize({
+      protocolVersion: 1,
+      clientCapabilities: {},
+    });
+
+    expect(initializeResponse.authMethods).toContainEqual(
+      expect.objectContaining({ id: "claude-login" }),
     );
   });
 });
