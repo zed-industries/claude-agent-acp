@@ -60,6 +60,7 @@ import {
   SDKStatusMessage,
   SDKSystemMessage,
   SDKTaskNotificationMessage,
+  SDKTaskProgressMessage,
   SDKTaskStartedMessage,
   SDKToolProgressMessage,
   SDKToolUseSummaryMessage,
@@ -110,6 +111,7 @@ type SDKMessageTemp =
   | SDKAuthStatusMessage
   | SDKTaskNotificationMessage
   | SDKTaskStartedMessage
+  | SDKTaskProgressMessage
   | SDKFilesPersistedEvent
   | SDKToolUseSummaryMessage;
 
@@ -643,6 +645,7 @@ export class ClaudeAcpAgent implements Agent {
             case "status":
             case "files_persisted":
             case "task_started":
+            case "task_progress":
               // Todo: process via status api: https://docs.claude.com/en/docs/claude-code/hooks#hook-output
               break;
             default:
