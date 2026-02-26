@@ -3,7 +3,6 @@ import { ClaudeAcpAgent } from "../acp-agent.js";
 import { AgentSideConnection } from "@agentclientprotocol/sdk";
 
 describe("authorization", () => {
-
   beforeEach(() => {
     vi.useFakeTimers();
   });
@@ -87,7 +86,7 @@ describe("authorization", () => {
 
   it("hide claude authentication", async () => {
     const [agent] = await createAgentMock();
-    vi.stubGlobal("process", { ...process, argv: ['--hide-claude-auth'] });
+    vi.stubGlobal("process", { ...process, argv: ["--hide-claude-auth"] });
 
     const initializeResponse = await agent.initialize({
       protocolVersion: 1,
