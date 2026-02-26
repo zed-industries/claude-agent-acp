@@ -105,10 +105,3 @@ export function applyEnvironmentSettings(settings: ClaudeCodeSettings): void {
     }
   }
 }
-
-// Helper to encode a path like Claude does:
-// - Unix: "/Users/test" -> "-Users-test"
-// - Windows: "C:\Users\test" -> "C--Users-test"
-export function encodeProjectPath(cwd: string): string {
-  return cwd.replace(/[^a-zA-Z0-9]/g, "-");
-}

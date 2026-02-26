@@ -24,7 +24,6 @@ import {
   ResumeSessionRequest,
   ResumeSessionResponse,
   SessionConfigOption,
-  SessionInfo,
   SessionModelState,
   SessionNotification,
   SetSessionConfigOptionRequest,
@@ -72,15 +71,8 @@ import {
 } from "@anthropic-ai/claude-agent-sdk";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import * as readline from "node:readline";
 import * as os from "node:os";
-import {
-  encodeProjectPath,
-  nodeToWebReadable,
-  nodeToWebWritable,
-  Pushable,
-  unreachable,
-} from "./utils.js";
+import { nodeToWebReadable, nodeToWebWritable, Pushable, unreachable } from "./utils.js";
 import {
   toolInfoFromToolUse,
   planEntries,
@@ -120,10 +112,6 @@ type SDKMessageTemp =
 export const CLAUDE_CONFIG_DIR =
   process.env.CLAUDE_CONFIG_DIR ?? path.join(os.homedir(), ".claude");
 
-function sessionFilePath(cwd: string, sessionId: string): string {
-  return path.join(CLAUDE_CONFIG_DIR, "projects", encodeProjectPath(cwd), `${sessionId}.jsonl`);
-}
-
 const MAX_TITLE_LENGTH = 256;
 
 function sanitizeTitle(text: string): string {
@@ -153,17 +141,6 @@ type Session = {
   permissionMode: PermissionMode;
   settingsManager: SettingsManager;
   configOptions: SessionConfigOption[];
-};
-
-type SessionHistoryEntry = {
-  type?: string;
-  isSidechain?: boolean;
-  sessionId?: string;
-  message?: {
-    role?: string;
-    content?: unknown;
-    model?: string;
-  };
 };
 
 type BackgroundTerminal =
@@ -713,7 +690,7 @@ export class ClaudeAcpAgent implements Agent {
 
     for (const message of messages) {
       for (const notification of toAcpNotifications(
-        // @ts-expect-error
+        // @ts-expect-error - untyped in SDK but we handle all of these
         message.message,
         message.type,
         sessionId,
