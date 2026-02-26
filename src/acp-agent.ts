@@ -42,6 +42,8 @@ import {
 import { SettingsManager } from "./settings.js";
 import {
   CanUseTool,
+  getSessionMessages,
+  listSessions,
   McpServerConfig,
   ModelInfo,
   Options,
@@ -122,7 +124,7 @@ function sessionFilePath(cwd: string, sessionId: string): string {
   return path.join(CLAUDE_CONFIG_DIR, "projects", encodeProjectPath(cwd), `${sessionId}.jsonl`);
 }
 
-const MAX_TITLE_LENGTH = 128;
+const MAX_TITLE_LENGTH = 256;
 
 function sanitizeTitle(text: string): string {
   // Replace newlines and collapse whitespace
@@ -374,52 +376,7 @@ export class ClaudeAcpAgent implements Agent {
     return response;
   }
 
-  /**
-   * Find a session file by ID, first checking the given cwd's project directory,
-   * then falling back to scanning all project directories.
-   * Returns the absolute file path if found, or null if not found.
-   */
-  private async findSessionFile(sessionId: string, cwd: string): Promise<string | null> {
-    const fileName = `${sessionId}.jsonl`;
-
-    // Fast path: check the expected location based on cwd
-    const expectedPath = sessionFilePath(cwd, sessionId);
-    try {
-      await fs.promises.access(expectedPath);
-      return expectedPath;
-    } catch {
-      // Not found at expected path, scan all project directories
-    }
-
-    const claudeDir = path.join(CLAUDE_CONFIG_DIR, "projects");
-    try {
-      const projectDirs = await fs.promises.readdir(claudeDir);
-      for (const encodedPath of projectDirs) {
-        const projectDir = path.join(claudeDir, encodedPath);
-        const stat = await fs.promises.stat(projectDir);
-        if (!stat.isDirectory()) continue;
-
-        const candidatePath = path.join(projectDir, fileName);
-        try {
-          await fs.promises.access(candidatePath);
-          return candidatePath;
-        } catch {
-          continue;
-        }
-      }
-    } catch {
-      // projects directory doesn't exist or isn't readable
-    }
-
-    return null;
-  }
-
   async loadSession(params: LoadSessionRequest): Promise<LoadSessionResponse> {
-    const filePath = await this.findSessionFile(params.sessionId, params.cwd);
-    if (!filePath) {
-      throw new Error("Session not found");
-    }
-
     const response = await this.createSession(
       {
         cwd: params.cwd,
@@ -431,7 +388,7 @@ export class ClaudeAcpAgent implements Agent {
       },
     );
 
-    await this.replaySessionHistory(params.sessionId, filePath);
+    await this.replaySessionHistory(params.sessionId);
 
     // Send available commands after replay so it doesn't interleave with history
     setTimeout(() => {
@@ -445,167 +402,22 @@ export class ClaudeAcpAgent implements Agent {
     };
   }
 
-  /**
-   * List Claude Code sessions by parsing JSONL files
-   * Sessions are stored in ~/.claude/projects/<path-encoded>/
-   * Implements the draft session/list RFD spec
-   */
   async unstable_listSessions(params: ListSessionsRequest): Promise<ListSessionsResponse> {
-    // Note: We load all sessions into memory for sorting, so pagination here is for
-    // API response size limits rather than memory efficiency. This matches the RFD spec.
-    const PAGE_SIZE = 50;
-    const claudeDir = path.join(CLAUDE_CONFIG_DIR, "projects");
+    const sdk_sessions = await listSessions({ dir: params.cwd ?? undefined });
+    const sessions = [];
 
-    try {
-      await fs.promises.access(claudeDir);
-    } catch {
-      return { sessions: [] };
+    for (const session of sdk_sessions) {
+      if (!session.cwd) continue;
+      sessions.push({
+        sessionId: session.sessionId,
+        cwd: session.cwd,
+        title: sanitizeTitle(session.summary),
+        updatedAt: new Date(session.lastModified).toISOString(),
+      });
     }
-
-    // Collect all sessions across all project directories
-    const allSessions: SessionInfo[] = [];
-    const encodedCwdFilter = params.cwd ? encodeProjectPath(params.cwd) : null;
-
-    try {
-      const projectDirs = await fs.promises.readdir(claudeDir);
-
-      for (const encodedPath of projectDirs) {
-        const projectDir = path.join(claudeDir, encodedPath);
-        const stat = await fs.promises.stat(projectDir);
-        if (!stat.isDirectory()) continue;
-
-        // Path encoding is not always reversible (hyphens can be separators or literals),
-        // so only use encoded value as a coarse pre-filter.
-        if (encodedCwdFilter && encodedPath !== encodedCwdFilter) continue;
-
-        const files = await fs.promises.readdir(projectDir);
-        // Filter to user session files only. Skip agent-*.jsonl files which contain
-        // internal agent metadata and system logs, not user-visible conversation sessions.
-        const jsonlFiles = files.filter((f) => f.endsWith(".jsonl") && !f.startsWith("agent-"));
-
-        for (const file of jsonlFiles) {
-          const filePath = path.join(projectDir, file);
-          try {
-            const content = await fs.promises.readFile(filePath, "utf-8");
-            const lines = content.trim().split("\n").filter(Boolean);
-
-            const sessionId = file.replace(".jsonl", "");
-            let parsedAnyEntry = false;
-            let sessionCwd: string | undefined;
-
-            // Find first user message for title
-            let title: string | undefined;
-            for (const line of lines) {
-              try {
-                const entry = JSON.parse(line);
-                parsedAnyEntry = true;
-                if (entry.isSidechain === true) {
-                  continue;
-                }
-                const entrySessionId =
-                  typeof entry.sessionId === "string" ? entry.sessionId : undefined;
-                if (typeof entry.sessionId === "string" && entry.sessionId !== entrySessionId) {
-                  continue;
-                }
-                if (typeof entry.cwd === "string") {
-                  sessionCwd = entry.cwd;
-                }
-                if (!title && entry.type === "user" && entry.message?.content) {
-                  const msgContent = entry.message.content;
-                  if (typeof msgContent === "string") {
-                    title = sanitizeTitle(msgContent);
-                  }
-                  if (Array.isArray(msgContent) && msgContent.length > 0) {
-                    const first = msgContent[0];
-                    const text =
-                      typeof first === "string"
-                        ? first
-                        : first && typeof first === "object" && typeof first.text === "string"
-                          ? first.text
-                          : undefined;
-                    if (text) {
-                      title = sanitizeTitle(text);
-                    }
-                  }
-                }
-
-                // Continue scanning until we have both fields, since cwd can appear
-                // in later entries even after the first user title-bearing message.
-                if (title && sessionCwd) {
-                  break;
-                }
-              } catch {
-                // Skip malformed lines
-              }
-            }
-            if (!parsedAnyEntry) continue;
-
-            // SessionInfo.cwd is currently required. For entries that do not
-            // include an explicit cwd in the session JSONL (typically metadata-only files),
-            // we skip them instead of decoding folder names because path encoding is lossy.
-            if (!sessionCwd) continue;
-
-            // Even after encoded-path pre-filtering, verify per-entry cwd to disambiguate
-            // collisions such as "/a-b" and "/a/b" that map to the same encoded folder name.
-            if (params.cwd && sessionCwd !== params.cwd) continue;
-
-            // Get file modification time as updatedAt
-            const fileStat = await fs.promises.stat(filePath);
-            const updatedAt = fileStat.mtime.toISOString();
-
-            allSessions.push({
-              sessionId,
-              cwd: sessionCwd,
-              title: title ?? null,
-              updatedAt,
-            });
-          } catch (err) {
-            this.logger.error(
-              `[unstable_listSessions] Failed to parse session file: ${filePath}`,
-              err,
-            );
-          }
-        }
-      }
-    } catch (err) {
-      this.logger.error("[unstable_listSessions] Failed to list sessions", err);
-      return { sessions: [] };
-    }
-
-    // Sort by updatedAt descending (most recent first)
-    allSessions.sort((a, b) => {
-      const timeA = a.updatedAt ? new Date(a.updatedAt).getTime() : 0;
-      const timeB = b.updatedAt ? new Date(b.updatedAt).getTime() : 0;
-      return timeB - timeA;
-    });
-
-    // Handle pagination with cursor
-    let startIndex = 0;
-    if (params.cursor) {
-      try {
-        const decoded = Buffer.from(params.cursor, "base64").toString("utf-8");
-        const cursorData = JSON.parse(decoded);
-        startIndex = cursorData.offset ?? 0;
-      } catch {
-        // Invalid cursor, start from beginning
-      }
-    }
-
-    const pageOfSessions = allSessions.slice(startIndex, startIndex + PAGE_SIZE);
-    const hasMore = startIndex + PAGE_SIZE < allSessions.length;
-
-    const response: ListSessionsResponse = {
-      sessions: pageOfSessions,
+    return {
+      sessions,
     };
-
-    if (hasMore) {
-      const nextCursor = Buffer.from(JSON.stringify({ offset: startIndex + PAGE_SIZE })).toString(
-        "base64",
-      );
-      response.nextCursor = nextCursor;
-    }
-
-    return response;
   }
 
   async authenticate(_params: AuthenticateRequest): Promise<void> {
@@ -895,67 +707,23 @@ export class ClaudeAcpAgent implements Agent {
     }
   }
 
-  private async replaySessionHistory(sessionId: string, filePath: string): Promise<void> {
+  private async replaySessionHistory(sessionId: string): Promise<void> {
     const toolUseCache: ToolUseCache = {};
-    const stream = fs.createReadStream(filePath, { encoding: "utf-8" });
-    const reader = readline.createInterface({ input: stream, crlfDelay: Infinity });
+    const messages = await getSessionMessages(sessionId);
 
-    try {
-      for await (const line of reader) {
-        const trimmed = line.trim();
-        if (!trimmed) {
-          continue;
-        }
-
-        let entry: SessionHistoryEntry;
-        try {
-          entry = JSON.parse(trimmed) as SessionHistoryEntry;
-        } catch {
-          continue;
-        }
-
-        if (entry.type !== "user" && entry.type !== "assistant") {
-          continue;
-        }
-
-        if (entry.isSidechain) {
-          continue;
-        }
-
-        if (entry.sessionId && entry.sessionId !== sessionId) {
-          continue;
-        }
-
-        const message = entry.message;
-        if (!message) {
-          continue;
-        }
-
-        const role =
-          message.role === "assistant" ? "assistant" : message.role === "user" ? "user" : null;
-        if (!role) {
-          continue;
-        }
-
-        const content = message.content;
-        if (typeof content !== "string" && !Array.isArray(content)) {
-          continue;
-        }
-
-        for (const notification of toAcpNotifications(
-          content,
-          role,
-          sessionId,
-          toolUseCache,
-          this.client,
-          this.logger,
-          { registerHooks: false, clientCapabilities: this.clientCapabilities },
-        )) {
-          await this.client.sessionUpdate(notification);
-        }
+    for (const message of messages) {
+      for (const notification of toAcpNotifications(
+        // @ts-expect-error
+        message.message,
+        message.type,
+        sessionId,
+        toolUseCache,
+        this.client,
+        this.logger,
+        { registerHooks: false, clientCapabilities: this.clientCapabilities },
+      )) {
+        await this.client.sessionUpdate(notification);
       }
-    } finally {
-      reader.close();
     }
   }
 
