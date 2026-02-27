@@ -217,5 +217,4 @@ describe("ClaudeAcpAgent settings", () => {
     expect(setModelSpy).toHaveBeenCalledWith("claude-opus-4-6-1m");
     expect(response.models.currentModelId).toBe("claude-opus-4-6-1m");
   });
-
 });

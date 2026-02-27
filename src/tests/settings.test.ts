@@ -89,6 +89,5 @@ describe("SettingsManager", () => {
       settings = settingsManager.getSettings();
       expect(settings.permissions?.defaultMode).toBe("plan");
     });
-
   });
 });
