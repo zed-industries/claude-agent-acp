@@ -772,10 +772,27 @@ export const registerHookCallback = (
 /**
  * Wait for all pending PostToolUse hook callbacks to fire and complete.
  * Called by prompt() before returning to ensure notification-before-response ordering.
+ *
+ * Uses a timeout so that prompt() never hangs indefinitely if the SDK
+ * fails to fire a registered hook (e.g. during interruption or error).
  */
-export const awaitPendingHooks = async (): Promise<void> => {
+const HOOK_TIMEOUT_MS = 5_000;
+
+export const awaitPendingHooks = async (
+  logger: Logger = console,
+): Promise<void> => {
   if (0 < pendingHookPromises.size) {
-    await Promise.all(pendingHookPromises.values());
+    const timeout = new Promise<"timeout">((resolve) =>
+      setTimeout(() => resolve("timeout"), HOOK_TIMEOUT_MS),
+    );
+    const hooks = Promise.all(pendingHookPromises.values()).then(() => "done" as const);
+    const result = await Promise.race([hooks, timeout]);
+    if (result === "timeout") {
+      logger.error(
+        `awaitPendingHooks timed out after ${HOOK_TIMEOUT_MS}ms with ${pendingHookPromises.size} pending hook(s): ${[...pendingHookPromises.keys()].join(", ")}`,
+      );
+      pendingHookPromises.clear();
+    }
   }
 };
 

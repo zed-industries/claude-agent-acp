@@ -11,7 +11,7 @@ import {
   BetaBashCodeExecutionToolResultBlockParam,
 } from "@anthropic-ai/sdk/resources/beta.mjs";
 import { toAcpNotifications, ToolUseCache, Logger } from "../acp-agent.js";
-import { toolUpdateFromToolResult, createPostToolUseHook, awaitPendingHooks } from "../tools.js";
+import { toolUpdateFromToolResult, createPostToolUseHook, awaitPendingHooks, registerHookCallback } from "../tools.js";
 
 describe("rawOutput in tool call updates", () => {
   const mockClient = {} as AgentSideConnection;
@@ -1341,6 +1341,68 @@ describe("Bash terminal output", () => {
       const responseIdx = eventLog.indexOf("response:end_turn");
       const hookIdx = eventLog.indexOf("hook_update:tool_call_update");
       expect(hookIdx).toBeLessThan(responseIdx);
+    });
+
+    it("awaitPendingHooks resolves immediately when no hooks are pending", async () => {
+      // Should not hang or throw
+      await awaitPendingHooks(mockLogger);
+    });
+
+    it("awaitPendingHooks resolves even when the hook callback throws", async () => {
+      registerHookCallback("toolu_throw", {
+        onPostToolUseHook: async () => {
+          throw new Error("hook exploded");
+        },
+      });
+
+      const hook = createPostToolUseHook(mockLogger);
+      // Fire the hook — the wrapped callback will throw, but the finally
+      // block should still resolve the pending promise. The error
+      // propagates out of createPostToolUseHook, so we catch it here;
+      // the point of this test is that awaitPendingHooks still resolves.
+      await hook(
+        {
+          hook_event_name: "PostToolUse",
+          tool_name: "Bash",
+          tool_input: {},
+          tool_response: "",
+          tool_use_id: "toolu_throw",
+          session_id: "test-session",
+          transcript_path: "/tmp/test",
+          cwd: "/tmp",
+        },
+        "toolu_throw",
+        { signal: AbortSignal.abort() },
+      ).catch(() => {});
+
+      // Should resolve without hanging
+      await awaitPendingHooks(mockLogger);
+    });
+
+    it("awaitPendingHooks times out when the SDK never fires a hook", async () => {
+      // Register a hook but never fire createPostToolUseHook for it.
+      registerHookCallback("toolu_orphan", {
+        onPostToolUseHook: async () => {},
+      });
+
+      const errorMessages: string[] = [];
+      const capturingLogger: Logger = {
+        log: () => {},
+        error: (...args: any[]) => errorMessages.push(args.join(" ")),
+      };
+
+      // awaitPendingHooks should time out rather than hang forever.
+      // We use vi.useFakeTimers to avoid actually waiting 5 seconds.
+      const { vi } = await import("vitest");
+      vi.useFakeTimers();
+      const pending = awaitPendingHooks(capturingLogger);
+      await vi.advanceTimersByTimeAsync(5_000);
+      await pending;
+      vi.useRealTimers();
+
+      expect(errorMessages.length).toBe(1);
+      expect(errorMessages[0]).toContain("timed out");
+      expect(errorMessages[0]).toContain("toolu_orphan");
     });
   });
 });

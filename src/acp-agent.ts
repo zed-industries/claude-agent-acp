@@ -512,7 +512,7 @@ export class ClaudeAcpAgent implements Agent {
 
           // Flush any pending PostToolUse hook notifications before returning
           // the RPC response, ensuring notification-before-response ordering.
-          await awaitPendingHooks();
+          await awaitPendingHooks(this.logger);
 
           switch (message.subtype) {
             case "success": {
