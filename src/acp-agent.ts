@@ -766,8 +766,9 @@ export class ClaudeAcpAgent implements Agent {
     for (const message of messages) {
       for (const notification of toAcpNotifications(
         // @ts-expect-error - untyped in SDK but we handle all of these
-        message.message,
-        message.type,
+        message.message.content,
+        // @ts-expect-error - untyped in SDK but we handle all of these
+        message.message.role,
         sessionId,
         toolUseCache,
         this.client,
