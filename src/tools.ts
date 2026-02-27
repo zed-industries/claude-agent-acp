@@ -727,6 +727,13 @@ const toolUseCallbacks: {
   };
 } = {};
 
+/**
+ * Promises that resolve when each pending hook callback has fired and its
+ * sessionUpdate has completed.  prompt() awaits these before returning so
+ * that hook notifications are guaranteed to be written before the RPC response.
+ */
+const pendingHookPromises: Map<string, Promise<void>> = new Map();
+
 /* Setup callbacks that will be called when receiving hooks from Claude Code */
 export const registerHookCallback = (
   toolUseID: string,
@@ -740,9 +747,53 @@ export const registerHookCallback = (
     ) => Promise<void>;
   },
 ) => {
-  toolUseCallbacks[toolUseID] = {
-    onPostToolUseHook,
-  };
+  if (onPostToolUseHook) {
+    let resolveHook!: () => void;
+    const hookPromise = new Promise<void>((resolve) => {
+      resolveHook = resolve;
+    });
+    pendingHookPromises.set(toolUseID, hookPromise);
+
+    toolUseCallbacks[toolUseID] = {
+      onPostToolUseHook: async (id, input, response) => {
+        try {
+          await onPostToolUseHook(id, input, response);
+        } finally {
+          pendingHookPromises.delete(toolUseID);
+          resolveHook();
+        }
+      },
+    };
+  } else {
+    toolUseCallbacks[toolUseID] = { onPostToolUseHook };
+  }
+};
+
+/**
+ * Wait for all pending PostToolUse hook callbacks to fire and complete.
+ * Called by prompt() before returning to ensure notification-before-response ordering.
+ *
+ * Uses a timeout so that prompt() never hangs indefinitely if the SDK
+ * fails to fire a registered hook (e.g. during interruption or error).
+ */
+const HOOK_TIMEOUT_MS = 5_000;
+
+export const awaitPendingHooks = async (
+  logger: Logger = console,
+): Promise<void> => {
+  if (0 < pendingHookPromises.size) {
+    const timeout = new Promise<"timeout">((resolve) =>
+      setTimeout(() => resolve("timeout"), HOOK_TIMEOUT_MS),
+    );
+    const hooks = Promise.all(pendingHookPromises.values()).then(() => "done" as const);
+    const result = await Promise.race([hooks, timeout]);
+    if (result === "timeout") {
+      logger.error(
+        `awaitPendingHooks timed out after ${HOOK_TIMEOUT_MS}ms with ${pendingHookPromises.size} pending hook(s): ${[...pendingHookPromises.keys()].join(", ")}`,
+      );
+      pendingHookPromises.clear();
+    }
+  }
 };
 
 /* A callback for Claude Code that is called when receiving a PostToolUse hook */
@@ -761,13 +812,15 @@ export const createPostToolUseHook =
       }
 
       if (toolUseID) {
-        const onPostToolUseHook = toolUseCallbacks[toolUseID]?.onPostToolUseHook;
-        if (onPostToolUseHook) {
-          await onPostToolUseHook(toolUseID, input.tool_input, input.tool_response);
+        const entry = toolUseCallbacks[toolUseID];
+        if (entry?.onPostToolUseHook) {
+          await entry.onPostToolUseHook(toolUseID, input.tool_input, input.tool_response);
           delete toolUseCallbacks[toolUseID]; // Cleanup after execution
+        } else if (entry) {
+          // No-op registration (e.g. TodoWrite) — clean up silently.
+          delete toolUseCallbacks[toolUseID];
         } else {
           logger.error(`No onPostToolUseHook found for tool use ID: ${toolUseID}`);
-          delete toolUseCallbacks[toolUseID];
         }
       }
     }

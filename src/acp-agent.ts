@@ -81,6 +81,7 @@ import {
   ClaudePlanEntry,
   registerHookCallback,
   createPostToolUseHook,
+  awaitPendingHooks,
 } from "./tools.js";
 import { ContentBlockParam } from "@anthropic-ai/sdk/resources";
 import { BetaContentBlock, BetaRawContentBlockDelta } from "@anthropic-ai/sdk/resources/beta.mjs";
@@ -508,6 +509,10 @@ export class ClaudeAcpAgent implements Agent {
               session.accumulatedUsage.cachedReadTokens +
               session.accumulatedUsage.cachedWriteTokens,
           };
+
+          // Flush any pending PostToolUse hook notifications before returning
+          // the RPC response, ensuring notification-before-response ordering.
+          await awaitPendingHooks(this.logger);
 
           switch (message.subtype) {
             case "success": {
@@ -1475,37 +1480,51 @@ export function toAcpNotifications(
               entries: planEntries(chunk.input as { todos: ClaudePlanEntry[] }),
             };
           }
+          // Register a no-op hook so the SDK's PostToolUse callback
+          // resolves cleanly instead of logging an error.
+          if (registerHooks && !alreadyCached) {
+            registerHookCallback(chunk.id, {});
+          }
         } else {
           // Only register hooks on first encounter to avoid double-firing
           if (registerHooks && !alreadyCached) {
-            registerHookCallback(chunk.id, {
-              onPostToolUseHook: async (toolUseId, toolInput, toolResponse) => {
-                const toolUse = toolUseCache[toolUseId];
-                if (toolUse) {
-                  const editDiff =
-                    toolUse.name === "Edit" ? toolUpdateFromEditToolResponse(toolResponse) : {};
-                  const update: SessionNotification["update"] = {
-                    _meta: {
-                      claudeCode: {
-                        toolResponse,
-                        toolName: toolUse.name,
-                      },
-                    } satisfies ToolUpdateMeta,
-                    toolCallId: toolUseId,
-                    sessionUpdate: "tool_call_update",
-                    ...editDiff,
-                  };
-                  await client.sessionUpdate({
-                    sessionId,
-                    update,
-                  });
-                } else {
-                  logger.error(
-                    `[claude-agent-acp] Got a tool response for tool use that wasn't tracked: ${toolUseId}`,
-                  );
-                }
-              },
-            });
+            if (chunk.type === "server_tool_use") {
+              // Server tools (WebSearch, WebFetch, code_execution, etc.)
+              // are executed API-side; the SDK never fires PostToolUse for
+              // them.  Register a no-op hook to avoid stale pending-promise
+              // timeouts.  Results arrive via the tool_result /
+              // web_search_tool_result / etc. content blocks handled below.
+              registerHookCallback(chunk.id, {});
+            } else {
+              registerHookCallback(chunk.id, {
+                onPostToolUseHook: async (toolUseId, toolInput, toolResponse) => {
+                  const toolUse = toolUseCache[toolUseId];
+                  if (toolUse) {
+                    const editDiff =
+                      toolUse.name === "Edit" ? toolUpdateFromEditToolResponse(toolResponse) : {};
+                    const update: SessionNotification["update"] = {
+                      _meta: {
+                        claudeCode: {
+                          toolResponse,
+                          toolName: toolUse.name,
+                        },
+                      } satisfies ToolUpdateMeta,
+                      toolCallId: toolUseId,
+                      sessionUpdate: "tool_call_update",
+                      ...editDiff,
+                    };
+                    await client.sessionUpdate({
+                      sessionId,
+                      update,
+                    });
+                  } else {
+                    logger.error(
+                      `[claude-agent-acp] Got a tool response for tool use that wasn't tracked: ${toolUseId}`,
+                    );
+                  }
+                },
+              });
+            }
           }
 
           let rawInput;
