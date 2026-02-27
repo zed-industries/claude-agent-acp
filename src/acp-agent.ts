@@ -1480,6 +1480,11 @@ export function toAcpNotifications(
               entries: planEntries(chunk.input as { todos: ClaudePlanEntry[] }),
             };
           }
+          // Register a no-op hook so the SDK's PostToolUse callback
+          // resolves cleanly instead of logging an error.
+          if (registerHooks && !alreadyCached) {
+            registerHookCallback(chunk.id, {});
+          }
         } else {
           // Only register hooks on first encounter to avoid double-firing
           if (registerHooks && !alreadyCached) {

@@ -812,13 +812,15 @@ export const createPostToolUseHook =
       }
 
       if (toolUseID) {
-        const onPostToolUseHook = toolUseCallbacks[toolUseID]?.onPostToolUseHook;
-        if (onPostToolUseHook) {
-          await onPostToolUseHook(toolUseID, input.tool_input, input.tool_response);
+        const entry = toolUseCallbacks[toolUseID];
+        if (entry?.onPostToolUseHook) {
+          await entry.onPostToolUseHook(toolUseID, input.tool_input, input.tool_response);
           delete toolUseCallbacks[toolUseID]; // Cleanup after execution
+        } else if (entry) {
+          // No-op registration (e.g. TodoWrite) — clean up silently.
+          delete toolUseCallbacks[toolUseID];
         } else {
           logger.error(`No onPostToolUseHook found for tool use ID: ${toolUseID}`);
-          delete toolUseCallbacks[toolUseID];
         }
       }
     }
