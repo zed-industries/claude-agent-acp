@@ -727,6 +727,13 @@ const toolUseCallbacks: {
   };
 } = {};
 
+/**
+ * Promises that resolve when each pending hook callback has fired and its
+ * sessionUpdate has completed.  prompt() awaits these before returning so
+ * that hook notifications are guaranteed to be written before the RPC response.
+ */
+const pendingHookPromises: Map<string, Promise<void>> = new Map();
+
 /* Setup callbacks that will be called when receiving hooks from Claude Code */
 export const registerHookCallback = (
   toolUseID: string,
@@ -740,9 +747,36 @@ export const registerHookCallback = (
     ) => Promise<void>;
   },
 ) => {
-  toolUseCallbacks[toolUseID] = {
-    onPostToolUseHook,
-  };
+  if (onPostToolUseHook) {
+    let resolveHook!: () => void;
+    const hookPromise = new Promise<void>((resolve) => {
+      resolveHook = resolve;
+    });
+    pendingHookPromises.set(toolUseID, hookPromise);
+
+    toolUseCallbacks[toolUseID] = {
+      onPostToolUseHook: async (id, input, response) => {
+        try {
+          await onPostToolUseHook(id, input, response);
+        } finally {
+          pendingHookPromises.delete(toolUseID);
+          resolveHook();
+        }
+      },
+    };
+  } else {
+    toolUseCallbacks[toolUseID] = { onPostToolUseHook };
+  }
+};
+
+/**
+ * Wait for all pending PostToolUse hook callbacks to fire and complete.
+ * Called by prompt() before returning to ensure notification-before-response ordering.
+ */
+export const awaitPendingHooks = async (): Promise<void> => {
+  if (0 < pendingHookPromises.size) {
+    await Promise.all(pendingHookPromises.values());
+  }
 };
 
 /* A callback for Claude Code that is called when receiving a PostToolUse hook */

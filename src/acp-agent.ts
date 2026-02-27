@@ -81,6 +81,7 @@ import {
   ClaudePlanEntry,
   registerHookCallback,
   createPostToolUseHook,
+  awaitPendingHooks,
 } from "./tools.js";
 import { ContentBlockParam } from "@anthropic-ai/sdk/resources";
 import { BetaContentBlock, BetaRawContentBlockDelta } from "@anthropic-ai/sdk/resources/beta.mjs";
@@ -508,6 +509,10 @@ export class ClaudeAcpAgent implements Agent {
               session.accumulatedUsage.cachedReadTokens +
               session.accumulatedUsage.cachedWriteTokens,
           };
+
+          // Flush any pending PostToolUse hook notifications before returning
+          // the RPC response, ensuring notification-before-response ordering.
+          await awaitPendingHooks();
 
           switch (message.subtype) {
             case "success": {

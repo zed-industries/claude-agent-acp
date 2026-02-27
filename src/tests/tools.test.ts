@@ -11,7 +11,7 @@ import {
   BetaBashCodeExecutionToolResultBlockParam,
 } from "@anthropic-ai/sdk/resources/beta.mjs";
 import { toAcpNotifications, ToolUseCache, Logger } from "../acp-agent.js";
-import { toolUpdateFromToolResult, createPostToolUseHook } from "../tools.js";
+import { toolUpdateFromToolResult, createPostToolUseHook, awaitPendingHooks } from "../tools.js";
 
 describe("rawOutput in tool call updates", () => {
   const mockClient = {} as AgentSideConnection;
@@ -1232,6 +1232,115 @@ describe("Bash terminal output", () => {
       expect(hookMeta.terminal_info).toBeUndefined();
       expect(hookMeta.terminal_output).toBeUndefined();
       expect(hookMeta.terminal_exit).toBeUndefined();
+    });
+  });
+
+  describe("post-tool-use hook notifications arrive before prompt() returns", () => {
+    it("hook sessionUpdate arrives before the RPC response is sent", async () => {
+      // This test verifies that PostToolUse hook notifications are flushed
+      // before prompt() returns. In the real flow:
+      //
+      //   1. prompt() processes SDK messages in a while loop
+      //   2. tool_use chunks register hook callbacks via registerHookCallback
+      //   3. SDK yields a "result" message
+      //   4. prompt() calls awaitPendingHooks() — hooks fire, sessionUpdate writes
+      //   5. prompt() returns — #processMessage sends the RPC response
+      //
+      // We simulate this by tracking the order of events:
+      //   - "notifications" from toAcpNotifications (synchronous, during prompt)
+      //   - "hook_update" from the PostToolUse hook callback's sessionUpdate
+      //   - "response" representing prompt()'s return value
+
+      const eventLog: string[] = [];
+      const toolUseCache: ToolUseCache = {};
+
+      const mockClientWithUpdate = {
+        sessionUpdate: async (notification: any) => {
+          eventLog.push(`hook_update:${notification.update.sessionUpdate}`);
+        },
+      } as unknown as AgentSideConnection;
+
+      // Step 1: Process tool_use chunk (registers the hook callback)
+      const toolUseNotifications = toAcpNotifications(
+        [
+          {
+            type: "tool_use" as const,
+            id: "toolu_race",
+            name: "Bash",
+            input: { command: "echo hello" },
+          },
+        ],
+        "assistant",
+        "test-session",
+        toolUseCache,
+        mockClientWithUpdate,
+        mockLogger,
+      );
+
+      // These notifications would be sent via await client.sessionUpdate()
+      // inside the prompt() while loop — BEFORE the response.
+      for (const n of toolUseNotifications) {
+        eventLog.push(`notification:${(n.update as any).sessionUpdate}`);
+      }
+
+      // Step 2: Process tool result (more synchronous notifications)
+      const resultNotifications = toAcpNotifications(
+        [
+          {
+            type: "tool_result" as const,
+            tool_use_id: "toolu_race",
+            content: "hello\n",
+            is_error: false,
+          },
+        ],
+        "assistant",
+        "test-session",
+        toolUseCache,
+        mockClientWithUpdate,
+        mockLogger,
+      );
+
+      for (const n of resultNotifications) {
+        eventLog.push(`notification:${(n.update as any).sessionUpdate}`);
+      }
+
+      // Step 3: Simulate the hook firing asynchronously (the SDK fires this
+      // on the event loop; we schedule it but don't await yet).
+      const hook = createPostToolUseHook(mockLogger);
+      const hookFired = hook(
+        {
+          hook_event_name: "PostToolUse",
+          tool_name: "Bash",
+          tool_input: { command: "echo hello" },
+          tool_response: "hello\n",
+          tool_use_id: "toolu_race",
+          session_id: "test-session",
+          transcript_path: "/tmp/test",
+          cwd: "/tmp",
+        },
+        "toolu_race",
+        { signal: AbortSignal.abort() },
+      );
+
+      // Step 4: prompt() awaits pending hooks before returning.
+      // This ensures the hook's sessionUpdate is flushed before the response.
+      await awaitPendingHooks();
+      await hookFired;
+
+      // Step 5: prompt() returns — the RPC response is sent
+      eventLog.push("response:end_turn");
+
+      // Hook notifications arrive BEFORE the response.
+      expect(eventLog).toEqual([
+        "notification:tool_call",
+        "notification:tool_call_update",
+        "hook_update:tool_call_update",
+        "response:end_turn",
+      ]);
+
+      const responseIdx = eventLog.indexOf("response:end_turn");
+      const hookIdx = eventLog.indexOf("hook_update:tool_call_update");
+      expect(hookIdx).toBeLessThan(responseIdx);
     });
   });
 });
