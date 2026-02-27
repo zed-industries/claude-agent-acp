@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.19.2
+
+- Fix for broken notifications when reloading session messages
+
 ## 0.19.1
 
 - Support windows arm builds and clean up artifact files
