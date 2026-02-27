@@ -75,6 +75,7 @@ import {
   WebFetchInput,
   WebSearchInput,
 } from "@anthropic-ai/claude-agent-sdk/sdk-tools.js";
+import { acpToolNames } from "./mcp-server.js";
 
 interface ToolInfo {
   title: string;
@@ -168,7 +169,8 @@ export function toolInfoFromToolUse(
       };
     }
 
-    case "Write": {
+    case "Write":
+    case acpToolNames.write: {
       const input = toolUse.input as FileWriteInput;
       let content: ToolCallContent[] = [];
       if (input && input.file_path) {
@@ -196,7 +198,8 @@ export function toolInfoFromToolUse(
       };
     }
 
-    case "Edit": {
+    case "Edit":
+    case acpToolNames.edit: {
       const input = toolUse.input as FileEditInput;
       let content: ToolCallContent[] = [];
       if (input && input.file_path && (input.old_string || input.new_string)) {
@@ -511,7 +514,9 @@ export function toolUpdateFromToolResult(
     }
 
     case "Edit": // Edit is handled in hooks
-    case "Write": {
+    case "Write":
+    case acpToolNames.edit:
+    case acpToolNames.write: {
       return {};
     }
 
@@ -751,6 +756,7 @@ export const createPostToolUseHook =
     logger: Logger = console,
     options?: {
       onEnterPlanMode?: () => Promise<void>;
+      onFileRead?: (filePath: string) => Promise<void>;
     },
   ): HookCallback =>
   async (input: any, toolUseID: string | undefined): Promise<{ continue: boolean }> => {
@@ -758,6 +764,11 @@ export const createPostToolUseHook =
       // Handle EnterPlanMode tool - notify client of mode change after successful execution
       if (input.tool_name === "EnterPlanMode" && options?.onEnterPlanMode) {
         await options.onEnterPlanMode();
+      }
+
+      // Track file reads so the MCP Edit/Write tools can enforce read-before-edit
+      if (input.tool_name === "Read" && input.tool_input?.file_path && options?.onFileRead) {
+        await options.onFileRead(input.tool_input.file_path);
       }
 
       if (toolUseID) {
@@ -772,4 +783,69 @@ export const createPostToolUseHook =
       }
     }
     return { continue: true };
+  };
+
+/**
+ * Tool redirects: maps built-in tool names to their mcp__acp__ equivalents.
+ * Used by both the PreToolUse hook (to deny/redirect) and the system prompt
+ * (to instruct Claude upfront).
+ */
+export const toolRedirects: Record<string, string> = {
+  Write: acpToolNames.write,
+  Edit: acpToolNames.edit,
+};
+
+/**
+ * Builds a system prompt append string from the registered tool redirects,
+ * instructing Claude to use the MCP tools instead of the built-in equivalents.
+ */
+export function buildToolRedirectPrompt(): string {
+  const entries = Object.entries(toolRedirects);
+  if (entries.length === 0) return "";
+
+  const rules = entries
+    .map(([builtin, mcp]) => `- NEVER call ${builtin}. ALWAYS call ${mcp} instead.`)
+    .join("\n");
+
+  const builtinList = entries.map(([b]) => b).join(", ");
+
+  return (
+    "\n\n<tool-routing-rules>\n" +
+    `You MUST NOT use the built-in ${builtinList} tools. They are disabled in this environment.\n` +
+    "Instead, use the following replacements (identical input schemas):\n" +
+    rules + "\n" +
+    "These route through Zed's editor so the user can review and accept/reject changes.\n" +
+    `Calling ${builtinList} directly will be rejected. Do not attempt it.\n` +
+    "</tool-routing-rules>"
+  );
+}
+
+/**
+ * PreToolUse hook that denies built-in tools listed in `toolRedirects` with a
+ * redirect message pointing Claude to the mcp__acp__ equivalents.
+ *
+ * Acts as a safety net — the system prompt already instructs Claude to use the
+ * correct tools, but this catches any cases where it doesn't.
+ */
+export const createPreToolUseHook =
+  (logger: Logger = console): HookCallback =>
+  async (input: any, _toolUseID: string | undefined): Promise<any> => {
+    if (input.hook_event_name !== "PreToolUse") return {};
+
+    const toolName = input.tool_name;
+    const redirect = toolRedirects[toolName];
+    if (redirect) {
+      logger.log(`[PreToolUse] Redirecting ${toolName} → ${redirect}`);
+      return {
+        hookSpecificOutput: {
+          hookEventName: "PreToolUse",
+          permissionDecision: "deny",
+          permissionDecisionReason:
+            `Use ${redirect} instead of ${toolName}. ` +
+            `The ${redirect} version routes through Zed's editor for diff review. ` +
+            `The input schema is the same.`,
+        },
+      };
+    }
+    return {};
   };

@@ -81,7 +81,11 @@ import {
   ClaudePlanEntry,
   registerHookCallback,
   createPostToolUseHook,
+  createPreToolUseHook,
+  buildToolRedirectPrompt,
+  toolRedirects,
 } from "./tools.js";
+import { createMcpServer } from "./mcp-server.js";
 import { ContentBlockParam } from "@anthropic-ai/sdk/resources";
 import { BetaContentBlock, BetaRawContentBlockDelta } from "@anthropic-ai/sdk/resources/beta.mjs";
 import packageJson from "../package.json" with { type: "json" };
@@ -979,6 +983,24 @@ export class ClaudeAcpAgent implements Agent {
     await settingsManager.initialize();
 
     const mcpServers: Record<string, McpServerConfig> = {};
+
+    // Register in-process MCP server for file operations if client supports filesystem
+    // This routes Write/Edit through Zed's buffer system, enabling the Review Changes UI
+    let mcpOnFileRead: ((filePath: string) => Promise<void>) | undefined;
+    if (this.clientCapabilities?.fs?.writeTextFile) {
+      const { server: acpMcpServer, onFileRead } = createMcpServer(
+        this,
+        sessionId,
+        this.clientCapabilities,
+      );
+      mcpOnFileRead = onFileRead;
+      mcpServers["acp"] = {
+        type: "sdk",
+        name: "acp",
+        instance: acpMcpServer,
+      };
+    }
+
     if (Array.isArray(params.mcpServers)) {
       for (const server of params.mcpServers) {
         if ("type" in server) {
@@ -1013,6 +1035,15 @@ export class ClaudeAcpAgent implements Agent {
         typeof customPrompt.append === "string"
       ) {
         systemPrompt.append = customPrompt.append;
+      }
+    }
+
+    // When the MCP server is registered, instruct Claude to use the ACP-routed tools
+    // so file edits flow through Zed's Review Changes UI
+    if (this.clientCapabilities?.fs?.writeTextFile && typeof systemPrompt === "object") {
+      const acpAppend = buildToolRedirectPrompt();
+      if (acpAppend) {
+        systemPrompt.append = systemPrompt.append ? systemPrompt.append + acpAppend : acpAppend;
       }
     }
 
@@ -1077,6 +1108,19 @@ export class ClaudeAcpAgent implements Agent {
       tools: { type: "preset", preset: "claude_code" },
       hooks: {
         ...userProvidedOptions?.hooks,
+        // PreToolUse hook redirects built-in tools to mcp__acp__ equivalents
+        // as a safety net (system prompt already instructs Claude to use them)
+        ...(this.clientCapabilities?.fs?.writeTextFile
+          ? {
+              PreToolUse: [
+                ...(userProvidedOptions?.hooks?.PreToolUse || []),
+                {
+                  matcher: Object.keys(toolRedirects).join("|"),
+                  hooks: [createPreToolUseHook(this.logger)],
+                },
+              ],
+            }
+          : {}),
         PostToolUse: [
           ...(userProvidedOptions?.hooks?.PostToolUse || []),
           {
@@ -1096,6 +1140,7 @@ export class ClaudeAcpAgent implements Agent {
                   });
                   await this.updateConfigOption(sessionId, "mode", "plan");
                 },
+                onFileRead: mcpOnFileRead,
               }),
             ],
           },

@@ -15,7 +15,8 @@ export {
   Pushable,
   unreachable,
 } from "./utils.js";
-export { toolInfoFromToolUse, planEntries, toolUpdateFromToolResult } from "./tools.js";
+export { toolInfoFromToolUse, planEntries, toolUpdateFromToolResult, createPreToolUseHook, buildToolRedirectPrompt, toolRedirects } from "./tools.js";
+export { createMcpServer, acpToolNames } from "./mcp-server.js";
 export {
   SettingsManager,
   type ClaudeCodeSettings,
