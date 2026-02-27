@@ -1379,30 +1379,16 @@ describe("Bash terminal output", () => {
       await awaitPendingHooks(mockLogger);
     });
 
-    it("awaitPendingHooks times out when the SDK never fires a hook", async () => {
+    it("awaitPendingHooks resolves immediately when a hook was registered but never fired", async () => {
       // Register a hook but never fire createPostToolUseHook for it.
-      registerHookCallback("toolu_orphan", {
+      // Since promises are only tracked when hooks actually fire,
+      // awaitPendingHooks should resolve immediately.
+      registerHookCallback("toolu_never_fired", {
         onPostToolUseHook: async () => {},
       });
 
-      const errorMessages: string[] = [];
-      const capturingLogger: Logger = {
-        log: () => {},
-        error: (...args: any[]) => errorMessages.push(args.join(" ")),
-      };
-
-      // awaitPendingHooks should time out rather than hang forever.
-      // We use vi.useFakeTimers to avoid actually waiting 5 seconds.
-      const { vi } = await import("vitest");
-      vi.useFakeTimers();
-      const pending = awaitPendingHooks(capturingLogger);
-      await vi.advanceTimersByTimeAsync(5_000);
-      await pending;
-      vi.useRealTimers();
-
-      expect(errorMessages.length).toBe(1);
-      expect(errorMessages[0]).toContain("timed out");
-      expect(errorMessages[0]).toContain("toolu_orphan");
+      // Should not hang — no in-flight promises to wait for.
+      await awaitPendingHooks(mockLogger);
     });
   });
 });

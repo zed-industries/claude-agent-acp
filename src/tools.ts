@@ -728,11 +728,12 @@ const toolUseCallbacks: {
 } = {};
 
 /**
- * Promises that resolve when each pending hook callback has fired and its
- * sessionUpdate has completed.  prompt() awaits these before returning so
- * that hook notifications are guaranteed to be written before the RPC response.
+ * Promises that resolve when each in-flight hook callback's sessionUpdate
+ * has completed.  Promises are added only when the SDK actually fires a
+ * hook (inside createPostToolUseHook), NOT at registration time, so
+ * awaitPendingHooks never waits for hooks the SDK chose not to fire.
  */
-const pendingHookPromises: Map<string, Promise<void>> = new Map();
+const inflightHookPromises: Map<string, Promise<void>> = new Map();
 
 /* Setup callbacks that will be called when receiving hooks from Claude Code */
 export const registerHookCallback = (
@@ -747,52 +748,19 @@ export const registerHookCallback = (
     ) => Promise<void>;
   },
 ) => {
-  if (onPostToolUseHook) {
-    let resolveHook!: () => void;
-    const hookPromise = new Promise<void>((resolve) => {
-      resolveHook = resolve;
-    });
-    pendingHookPromises.set(toolUseID, hookPromise);
-
-    toolUseCallbacks[toolUseID] = {
-      onPostToolUseHook: async (id, input, response) => {
-        try {
-          await onPostToolUseHook(id, input, response);
-        } finally {
-          pendingHookPromises.delete(toolUseID);
-          resolveHook();
-        }
-      },
-    };
-  } else {
-    toolUseCallbacks[toolUseID] = { onPostToolUseHook };
-  }
+  toolUseCallbacks[toolUseID] = { onPostToolUseHook };
 };
 
 /**
- * Wait for all pending PostToolUse hook callbacks to fire and complete.
- * Called by prompt() before returning to ensure notification-before-response ordering.
- *
- * Uses a timeout so that prompt() never hangs indefinitely if the SDK
- * fails to fire a registered hook (e.g. during interruption or error).
+ * Wait for all in-flight PostToolUse hook callbacks to complete their
+ * sessionUpdate writes.  Called by prompt() before returning to ensure
+ * notification-before-response ordering.
  */
-const HOOK_TIMEOUT_MS = 5_000;
-
 export const awaitPendingHooks = async (
-  logger: Logger = console,
+  _logger?: Logger,
 ): Promise<void> => {
-  if (0 < pendingHookPromises.size) {
-    const timeout = new Promise<"timeout">((resolve) =>
-      setTimeout(() => resolve("timeout"), HOOK_TIMEOUT_MS),
-    );
-    const hooks = Promise.all(pendingHookPromises.values()).then(() => "done" as const);
-    const result = await Promise.race([hooks, timeout]);
-    if (result === "timeout") {
-      logger.error(
-        `awaitPendingHooks timed out after ${HOOK_TIMEOUT_MS}ms with ${pendingHookPromises.size} pending hook(s): ${[...pendingHookPromises.keys()].join(", ")}`,
-      );
-      pendingHookPromises.clear();
-    }
+  if (0 < inflightHookPromises.size) {
+    await Promise.all(inflightHookPromises.values());
   }
 };
 
@@ -814,7 +782,14 @@ export const createPostToolUseHook =
       if (toolUseID) {
         const onPostToolUseHook = toolUseCallbacks[toolUseID]?.onPostToolUseHook;
         if (onPostToolUseHook) {
-          await onPostToolUseHook(toolUseID, input.tool_input, input.tool_response);
+          // Track this hook's sessionUpdate work so awaitPendingHooks()
+          // can wait for it to complete before the RPC response.
+          const hookWork = onPostToolUseHook(toolUseID, input.tool_input, input.tool_response)
+            .finally(() => {
+              inflightHookPromises.delete(toolUseID);
+            });
+          inflightHookPromises.set(toolUseID, hookWork);
+          await hookWork;
           delete toolUseCallbacks[toolUseID]; // Cleanup after execution
         } else {
           logger.error(`No onPostToolUseHook found for tool use ID: ${toolUseID}`);
