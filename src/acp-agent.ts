@@ -652,14 +652,8 @@ export class ClaudeAcpAgent implements Agent {
               this.logger.error(message.message.content);
               break;
             }
-            // Skip these user messages for now, since they seem to just be messages we don't want in the feed
-            if (
-              message.type === "user" &&
-              (typeof message.message.content === "string" ||
-                (Array.isArray(message.message.content) &&
-                  message.message.content.length === 1 &&
-                  message.message.content[0].type === "text"))
-            ) {
+            // Skip user messages — they are echoed back by the SDK but should not appear in the agent output feed
+            if (message.type === "user") {
               break;
             }
 
@@ -674,13 +668,10 @@ export class ClaudeAcpAgent implements Agent {
               throw RequestError.authRequired();
             }
 
-            const content =
-              message.type === "assistant"
-                ? // Handled by stream events above
-                  message.message.content.filter(
-                    (item) => !["text", "thinking"].includes(item.type),
-                  )
-                : message.message.content;
+            // Text and thinking blocks are handled by stream events above
+            const content = message.message.content.filter(
+              (item) => !["text", "thinking"].includes(item.type),
+            );
 
             for (const notification of toAcpNotifications(
               content,
