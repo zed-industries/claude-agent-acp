@@ -1379,6 +1379,37 @@ describe("Bash terminal output", () => {
       await awaitPendingHooks(mockLogger);
     });
 
+    it("server_tool_use blocks do not create pending hook promises", async () => {
+      // server_tool_use tools (WebSearch, WebFetch, etc.) are executed
+      // API-side; the SDK never fires PostToolUse for them.  Verify that
+      // processing a server_tool_use chunk registers a no-op callback so
+      // awaitPendingHooks resolves immediately.
+      const toolUseCache: ToolUseCache = {};
+      const mockClient = {
+        sessionUpdate: async () => {},
+      } as unknown as AgentSideConnection;
+
+      toAcpNotifications(
+        [
+          {
+            type: "server_tool_use" as const,
+            id: "toolu_server",
+            name: "web_search",
+            input: { query: "test" },
+          },
+        ],
+        "assistant",
+        "test-session",
+        toolUseCache,
+        mockClient,
+        mockLogger,
+      );
+
+      // awaitPendingHooks should resolve immediately because
+      // server_tool_use registers a no-op (no pending promise).
+      await awaitPendingHooks(mockLogger);
+    });
+
     it("awaitPendingHooks times out when the SDK never fires a hook", async () => {
       // Register a hook but never fire createPostToolUseHook for it.
       registerHookCallback("toolu_orphan", {
