@@ -18,26 +18,29 @@ jobs:
       matrix:
         include:
           - target: bun-linux-x64
-            artifact: claude-agent-acp-linux-x64
+            artifact: claude-agent-acp
             archive: claude-agent-acp-linux-x64.tar.gz
           - target: bun-linux-arm64
-            artifact: claude-agent-acp-linux-arm64
+            artifact: claude-agent-acp
             archive: claude-agent-acp-linux-arm64.tar.gz
           - target: bun-linux-x64-musl
-            artifact: claude-agent-acp-linux-x64-musl
+            artifact: claude-agent-acp
             archive: claude-agent-acp-linux-x64-musl.tar.gz
           - target: bun-linux-arm64-musl
-            artifact: claude-agent-acp-linux-arm64-musl
+            artifact: claude-agent-acp
             archive: claude-agent-acp-linux-arm64-musl.tar.gz
           - target: bun-darwin-x64
-            artifact: claude-agent-acp-darwin-x64
+            artifact: claude-agent-acp
             archive: claude-agent-acp-darwin-x64.zip
           - target: bun-darwin-arm64
-            artifact: claude-agent-acp-darwin-arm64
+            artifact: claude-agent-acp
             archive: claude-agent-acp-darwin-arm64.zip
           - target: bun-windows-x64
-            artifact: claude-agent-acp-windows-x64.exe
+            artifact: claude-agent-acp.exe
             archive: claude-agent-acp-windows-x64.zip
+          - target: bun-windows-arm64
+            artifact: claude-agent-acp.exe
+            archive: claude-agent-acp-windows-arm64.zip
 
     steps:
       - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8

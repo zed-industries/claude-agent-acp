@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.19.1
+
+- Support windows arm builds and clean up artifact files
+
 ## 0.19.0
 
 - Update to @anthropic-ai/claude-agent-sdk@0.2.62
