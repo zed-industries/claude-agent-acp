@@ -427,6 +427,23 @@ export class ClaudeAcpAgent implements Agent {
     const { query, input } = this.sessions[params.sessionId];
 
     input.push(promptToClaude(params));
+
+    // Background task completions from between prompts generate their own
+    // system/task_notification, system/init, stream_events, assistant/user
+    // messages, and result messages BEFORE the real response starts.
+    //
+    // The message sequence for a background task completion is:
+    //   task_notification → init → [streaming turn] → result
+    //
+    // The real prompt response starts with:
+    //   init → [streaming turn] → result
+    //
+    // We distinguish them: an init preceded by task_notification starts a
+    // background turn; an init NOT preceded by task_notification starts the
+    // real response. We drain all background turns before processing.
+    let lastWasTaskNotification = false;
+    let backgroundTurnInProgress = false;
+
     while (true) {
       const { value: message, done } = await (query as AsyncGenerator<SDKMessageTemp, void>).next();
 
@@ -446,10 +463,18 @@ export class ClaudeAcpAgent implements Agent {
           }
           switch (message.subtype) {
             case "init":
+              if (lastWasTaskNotification) {
+                backgroundTurnInProgress = true;
+                lastWasTaskNotification = false;
+              } else {
+                backgroundTurnInProgress = false;
+              }
+              break;
+            case "task_notification":
+              lastWasTaskNotification = true;
               break;
             case "compact_boundary":
             case "hook_started":
-            case "task_notification":
             case "hook_progress":
             case "hook_response":
             case "status":
@@ -466,6 +491,12 @@ export class ClaudeAcpAgent implements Agent {
         case "result": {
           if (this.sessions[params.sessionId].cancelled) {
             return { stopReason: "cancelled" };
+          }
+
+          if (backgroundTurnInProgress) {
+            // This result ends a background task processing turn.
+            backgroundTurnInProgress = false;
+            break;
           }
 
           // Accumulate usage from this result
@@ -544,6 +575,9 @@ export class ClaudeAcpAgent implements Agent {
           break;
         }
         case "stream_event": {
+          if (backgroundTurnInProgress) {
+            break;
+          }
           for (const notification of streamEventToAcpNotifications(
             message,
             params.sessionId,
@@ -559,6 +593,9 @@ export class ClaudeAcpAgent implements Agent {
         case "user":
         case "assistant": {
           if (this.sessions[params.sessionId].cancelled) {
+            break;
+          }
+          if (backgroundTurnInProgress) {
             break;
           }
 
