@@ -75,6 +75,7 @@ import {
   WebFetchInput,
   WebSearchInput,
 } from "@anthropic-ai/claude-agent-sdk/sdk-tools.js";
+import * as fs from "node:fs";
 
 interface ToolInfo {
   title: string;
@@ -751,6 +752,7 @@ export const createPostToolUseHook =
     logger: Logger = console,
     options?: {
       onEnterPlanMode?: () => Promise<void>;
+      onFileRead?: (filePath: string, content: string) => void;
     },
   ): HookCallback =>
   async (input: any, toolUseID: string | undefined): Promise<{ continue: boolean }> => {
@@ -758,6 +760,14 @@ export const createPostToolUseHook =
       // Handle EnterPlanMode tool - notify client of mode change after successful execution
       if (input.tool_name === "EnterPlanMode" && options?.onEnterPlanMode) {
         await options.onEnterPlanMode();
+      }
+
+      // Track file reads so Edit/Write intercept can enforce read-before-edit
+      if (input.tool_name === "Read" && input.tool_input?.file_path && options?.onFileRead) {
+        const content = extractReadContent(input.tool_response);
+        if (content != null) {
+          options.onFileRead(input.tool_input.file_path, content);
+        }
       }
 
       if (toolUseID) {
@@ -773,3 +783,112 @@ export const createPostToolUseHook =
     }
     return { continue: true };
   };
+
+/**
+ * Extracts the file content string from the Read tool's tool_response in PostToolUse.
+ */
+function extractReadContent(toolResponse: unknown): string | null {
+  if (typeof toolResponse === "string") return toolResponse;
+  if (toolResponse && typeof toolResponse === "object") {
+    const obj = toolResponse as Record<string, unknown>;
+    if ("content" in toolResponse && typeof obj.content === "string") {
+      return obj.content;
+    }
+  }
+  return null;
+}
+
+/**
+ * Checks if the tool response indicates an error.
+ */
+function isToolError(toolResponse: unknown): boolean {
+  if (!toolResponse || typeof toolResponse !== "object") return false;
+  const resp = toolResponse as Record<string, unknown>;
+  return resp.is_error === true || resp.error != null;
+}
+
+/**
+ * Intercepts built-in Edit/Write tool calls after they execute:
+ * 1. Reverts the file to its pre-edit state on disk
+ * 2. Routes the new content through ACP writeTextFile → Zed's Review Changes UI
+ * 3. Updates the content cache for consecutive edits
+ */
+export interface FileEditInterceptor {
+  /** Cache file content when Read completes (via PostToolUse). */
+  onFileRead: (filePath: string, content: string) => void;
+  /** Revert disk write and route through ACP writeTextFile. */
+  interceptEditWrite: (
+    toolName: string,
+    toolInput: unknown,
+    toolResponse: unknown,
+    writeTextFile: (path: string, content: string) => Promise<void>,
+  ) => Promise<void>;
+}
+
+export function createFileEditInterceptor(logger: Logger): FileEditInterceptor {
+  const fileContentCache = new Map<string, string>();
+
+  return {
+    onFileRead(filePath: string, content: string): void {
+      fileContentCache.set(filePath, content);
+    },
+
+    async interceptEditWrite(toolName, toolInput, toolResponse, writeTextFile) {
+      const input = toolInput as { file_path?: string; [key: string]: unknown };
+      const filePath = input?.file_path;
+      if (!filePath) return;
+      if (isToolError(toolResponse)) return;
+
+      const originalContent = fileContentCache.get(filePath);
+
+      // --- Determine new content ---
+      let newContent: string;
+      if (toolName === "Write") {
+        newContent = (toolInput as FileWriteInput).content;
+      } else if (toolName === "Edit") {
+        // Read from disk — the built-in Edit tool already wrote the new content.
+        // If the file was modified externally since the last Read, the built-in
+        // Edit will have already failed (old_string not found) and isToolError()
+        // bails out above.
+        try {
+          newContent = fs.readFileSync(filePath, "utf8");
+        } catch {
+          return;
+        }
+      } else {
+        return;
+      }
+
+      // --- Revert file to pre-edit state ---
+      try {
+        if (originalContent != null) {
+          fs.writeFileSync(filePath, originalContent);
+        } else if (toolName === "Write" && !fs.existsSync(filePath)) {
+          // File didn't exist before Write created it — nothing to revert
+        } else {
+          // Uncached existing file — skip revert since we don't have the original
+        }
+      } catch (e) {
+        logger.error(`[FileEditInterceptor] Failed to revert ${filePath}: ${e}`);
+        return;
+      }
+
+      // --- Route through ACP → Zed Review UI ---
+      try {
+        await writeTextFile(filePath, newContent);
+      } catch (e) {
+        logger.error(`[FileEditInterceptor] ACP writeTextFile failed for ${filePath}: ${e}`);
+        // Restore the new content to disk so the edit isn't lost
+        try {
+          fs.writeFileSync(filePath, newContent);
+        } catch {
+          /* double failure */
+        }
+        return;
+      }
+
+      // --- Update cache for consecutive edits ---
+      fileContentCache.set(filePath, newContent);
+    },
+  };
+}

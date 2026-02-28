@@ -15,7 +15,13 @@ export {
   Pushable,
   unreachable,
 } from "./utils.js";
-export { toolInfoFromToolUse, planEntries, toolUpdateFromToolResult } from "./tools.js";
+export {
+  toolInfoFromToolUse,
+  planEntries,
+  toolUpdateFromToolResult,
+  createFileEditInterceptor,
+  type FileEditInterceptor,
+} from "./tools.js";
 export {
   SettingsManager,
   type ClaudeCodeSettings,

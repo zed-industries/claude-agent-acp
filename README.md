@@ -1,58 +1,129 @@
-# ACP adapter for the Claude Agent SDK
+# Claude Code ACP Adapter — Edit Review Fork
 
-[![npm](https://img.shields.io/npm/v/%40zed-industries%2Fclaude-agent-acp)](https://www.npmjs.com/package/@zed-industries/claude-agent-acp)
+> A fork of [`zed-industries/claude-agent-acp`](https://github.com/zed-industries/claude-agent-acp) that restores Zed's **Review Changes** diff UI for Claude Code file edits.
 
-Use [Claude Agent SDK](https://platform.claude.com/docs/en/agent-sdk/overview#branding-guidelines) from [ACP-compatible](https://agentclientprotocol.com) clients such as [Zed](https://zed.dev)!
+## Overview
 
-This tool implements an ACP agent by using the official [Claude Agent SDK](https://platform.claude.com/docs/en/agent-sdk/overview), supporting:
+This adapter connects [Claude Code](https://docs.anthropic.com/en/docs/claude-code) to [Zed](https://zed.dev) via the [Agent Client Protocol (ACP)](https://agentclientprotocol.com). It adds a transparent **PostToolUse intercept** that routes file Write/Edit operations through Zed's buffer system, triggering the native **Review Changes** multibuffer where users can accept or reject each edit inline.
 
-- Context @-mentions
-- Images
-- Tool calls (with permission requests)
-- Following
-- Edit review
-- TODO lists
-- Interactive (and background) terminals
-- Custom [Slash commands](https://docs.anthropic.com/en/docs/claude-code/slash-commands)
-- Client MCP servers
+The upstream adapter (v0.18.0+) writes files directly to disk. This fork lets the built-in Edit/Write tools execute normally, then immediately reverts the file and routes the new content through Zed's `fs/write_text_file` ACP API, so every file change gets a diff review.
 
-Learn more about the [Agent Client Protocol](https://agentclientprotocol.com/).
+## How It Works
 
-## How to use
+```
+Zed ◄──ACP──► ClaudeAcpAgent ◄──Claude Agent SDK──► Claude API
+                    │
+                    ├── FileEditInterceptor (PostToolUse hook)
+                    │   ├── Edit: revert + route through ACP → Review UI
+                    │   └── Write: revert + route through ACP → Review UI
+                    │
+                    └── PostToolUse onFileRead (caches content for revert)
+```
 
-### Zed
+1. Claude calls the **built-in Edit or Write** tool — it executes normally, writing to disk
+2. The **PostToolUse hook** fires and calls the `FileEditInterceptor`
+3. The interceptor **reverts** the file to its pre-edit state on disk
+4. The interceptor **routes** the new content through `writeTextFile` → Zed's Review Changes UI
+5. The user **accepts or rejects** the change inline
 
-The latest version of Zed can already use this adapter out of the box.
+This works for both main sessions and subagents — since Claude uses its built-in tools directly, there are no MCP tool access issues.
 
-To use Claude Agent, open the Agent Panel and click "New Claude Agent Thread" from the `+` button menu in the top-right:
+## Background
 
-https://github.com/user-attachments/assets/ddce66c7-79ac-47a3-ad59-4a6a3ca74903
+In v0.18.0 ([PR #316](https://github.com/zed-industries/claude-agent-acp/pull/316)), the upstream repo removed an earlier MCP server that provided this functionality because it had critical bugs:
 
-Read the docs on [External Agent](https://zed.dev/docs/ai/external-agents) support.
+- **Subagent failures** — MCP tools couldn't be accessed by subagents (Task tool), causing silent write failures
+- **Stale reads** — `mcp__acp__Read` returned outdated buffer content
+- **Binary file crashes** — Image and binary files broke the ACP text routing
+- **Permission bypass** — Custom permissions engine conflicted with Claude Code's `.claude/settings.json`
 
-### Other clients
+This fork fixes all of those by using a PostToolUse intercept instead of an MCP server:
 
-Or try it with any of the other [ACP compatible clients](https://agentclientprotocol.com/overview/clients)!
+| Decision | Rationale |
+|----------|-----------|
+| **PostToolUse intercept, not MCP** | Built-in tools work everywhere (main session + subagents). No MCP tool access issues. |
+| **Write/Edit only** (no Read, no Bash) | Read works fine built-in. Only write operations need ACP routing for the Review UI. |
+| **Read-before-edit cache** | Files are cached when Read completes. Cache is used for reverting to the pre-edit state. Consecutive edits work without re-reading. |
+| **No system prompt or PreToolUse hook** | Claude uses its built-in tools naturally. No tool redirection needed. |
+| **No custom permissions** | Relies on Claude Code's built-in `canUseTool` and settings files. |
 
-#### Installation
+## Setup
 
-Install the adapter from `npm`:
+### Prerequisites
+
+- [Node.js](https://nodejs.org/) (v18+)
+- [Zed](https://zed.dev) (latest)
+- An Anthropic API key or Claude Code authentication
+
+### Install and Build
 
 ```bash
-npm install -g @zed-industries/claude-agent-acp
+git clone https://github.com/rohanpatra/claude-code-zed-acp.git
+cd claude-code-zed-acp
+npm install
+npm run build
 ```
 
-You can then use `claude-agent-acp` as a regular ACP agent:
+### Configure in Zed
 
+Add to your Zed settings (`~/.config/zed/settings.json`):
+
+```json
+{
+  "agent_servers": {
+    "Claude Code by Rohan Patra": {
+      "type": "custom",
+      "command": "node",
+      "args": ["/absolute/path/to/claude-code-zed-acp/dist/index.js"]
+    }
+  }
+}
 ```
-ANTHROPIC_API_KEY=sk-... claude-agent-acp
+
+Restart Zed. The custom agent will appear in the Agent Panel under the `+` menu.
+
+## Features
+
+Everything from the upstream adapter, plus improvements that bring the Zed experience closer to native Claude Code:
+
+- **Edit review** — File edits appear in Zed's Review Changes multibuffer with accept/reject controls
+- **Write review** — New file creation also flows through the diff viewer
+- **Read-before-edit cache** — Files are cached on Read so the interceptor can revert to the pre-edit state before routing through ACP
+- **Subagent compatibility** — Built-in tools work everywhere, fixing silent failures from the previous MCP-based implementation
+- **No tool redirection** — Claude uses its built-in Edit/Write tools naturally; the PostToolUse hook handles interception transparently
+- **ExitPlanMode bypass option** — When exiting plan mode, users can choose "Yes, and bypass permissions" alongside the existing accept-edits and default options
+- **Clean output feed** — User message echoes from the SDK are suppressed, keeping the Zed agent output free of duplicated input
+
+All other upstream features work unchanged:
+- Context @-mentions and images
+- Tool calls with permission requests
+- Interactive and background terminals
+- TODO lists and plan mode
+- Custom slash commands
+- Client MCP servers
+
+## Development
+
+```bash
+npm run build          # TypeScript compilation
+npm run test:run       # Unit tests
+npm run dev            # Build + start
+npm run test:integration  # Integration tests (requires RUN_INTEGRATION_TESTS=true)
 ```
 
-#### Single-file executable
+## Keeping Up with Upstream
 
-Pre-built single-file binaries are available on the [Releases](https://github.com/zed-industries/claude-agent-acp/releases) page for Linux, macOS, and Windows.
-These binaries bundle everything needed and don't require Node.js.
+This fork is designed for easy merges. All changes are additive:
+
+| File | Change | Merge notes |
+|------|--------|-------------|
+| `src/acp-agent.ts` | `FileEditInterceptor` creation + wiring in `createSession()`, forwarding in `toAcpNotifications`/`streamEventToAcpNotifications`, user message suppression in `prompt()`, `bypassPermissions` option in `canUseTool()` | Keep blocks in same logical positions |
+| `src/tools.ts` | Imports, helpers, `FileEditInterceptor` interface + factory at EOF, `onFileRead` option in `createPostToolUseHook` | Additions at end of file; shouldn't conflict |
+| `src/lib.ts` | 1 export line | Re-add if upstream changes exports |
+| `package.json` | No changes currently | May diverge if deps are added |
+
+See [CLAUDE.md](./CLAUDE.md) for detailed merge instructions and architecture documentation.
 
 ## License
 
-Apache-2.0
+Apache-2.0 (same as upstream)

@@ -81,6 +81,8 @@ import {
   ClaudePlanEntry,
   registerHookCallback,
   createPostToolUseHook,
+  createFileEditInterceptor,
+  type FileEditInterceptor,
 } from "./tools.js";
 import { ContentBlockParam } from "@anthropic-ai/sdk/resources";
 import { BetaContentBlock, BetaRawContentBlockDelta } from "@anthropic-ai/sdk/resources/beta.mjs";
@@ -152,6 +154,7 @@ type Session = {
   promptRunning: boolean;
   pendingMessages: Map<string, { resolve: (cancelled: boolean) => void; order: number }>;
   nextPendingOrder: number;
+  fileEditInterceptor?: FileEditInterceptor;
 };
 
 type BackgroundTerminal =
@@ -578,7 +581,10 @@ export class ClaudeAcpAgent implements Agent {
               this.toolUseCache,
               this.client,
               this.logger,
-              { clientCapabilities: this.clientCapabilities },
+              {
+                clientCapabilities: this.clientCapabilities,
+                fileEditInterceptor: session.fileEditInterceptor,
+              },
             )) {
               await this.client.sessionUpdate(notification);
             }
@@ -646,17 +652,6 @@ export class ClaudeAcpAgent implements Agent {
               this.logger.error(message.message.content);
               break;
             }
-            // Skip these user messages for now, since they seem to just be messages we don't want in the feed
-            if (
-              message.type === "user" &&
-              (typeof message.message.content === "string" ||
-                (Array.isArray(message.message.content) &&
-                  message.message.content.length === 1 &&
-                  message.message.content[0].type === "text"))
-            ) {
-              break;
-            }
-
             if (
               message.type === "assistant" &&
               message.message.model === "<synthetic>" &&
@@ -668,13 +663,23 @@ export class ClaudeAcpAgent implements Agent {
               throw RequestError.authRequired();
             }
 
-            const content =
-              message.type === "assistant"
-                ? // Handled by stream events above
-                  message.message.content.filter(
-                    (item) => !["text", "thinking"].includes(item.type),
-                  )
-                : message.message.content;
+            // String content is a plain text echo — skip
+            if (typeof message.message.content === "string") {
+              break;
+            }
+
+            // Filter text and thinking blocks from all messages:
+            // - Assistant text/thinking are already handled by stream events above
+            // - User text blocks are SDK echoes that shouldn't appear in the output feed
+            // Keep tool_result, tool_use, and other non-text blocks (e.g. terminal output)
+            const content = (message.message.content as BetaContentBlock[]).filter(
+              (item) => !["text", "thinking"].includes(item.type),
+            );
+
+            // Nothing left after filtering — skip (pure text user echo, etc.)
+            if (content.length === 0) {
+              break;
+            }
 
             for (const notification of toAcpNotifications(
               content,
@@ -686,6 +691,7 @@ export class ClaudeAcpAgent implements Agent {
               {
                 clientCapabilities: this.clientCapabilities,
                 parentToolUseId: message.parent_tool_use_id,
+                fileEditInterceptor: session.fileEditInterceptor,
               },
             )) {
               await this.client.sessionUpdate(notification);
@@ -875,6 +881,15 @@ export class ClaudeAcpAgent implements Agent {
               name: "Yes, and auto-accept edits",
               optionId: "acceptEdits",
             },
+            ...(ALLOW_BYPASS
+              ? [
+                  {
+                    kind: "allow_always" as const,
+                    name: "Yes, and bypass permissions",
+                    optionId: "bypassPermissions",
+                  },
+                ]
+              : []),
             { kind: "allow_once", name: "Yes, and manually approve edits", optionId: "default" },
             { kind: "reject_once", name: "No, keep planning", optionId: "plan" },
           ],
@@ -894,7 +909,9 @@ export class ClaudeAcpAgent implements Agent {
         }
         if (
           response.outcome?.outcome === "selected" &&
-          (response.outcome.optionId === "default" || response.outcome.optionId === "acceptEdits")
+          (response.outcome.optionId === "default" ||
+            response.outcome.optionId === "acceptEdits" ||
+            response.outcome.optionId === "bypassPermissions")
         ) {
           session.permissionMode = response.outcome.optionId;
           await this.client.sessionUpdate({
@@ -1045,6 +1062,11 @@ export class ClaudeAcpAgent implements Agent {
     await settingsManager.initialize();
 
     const mcpServers: Record<string, McpServerConfig> = {};
+    let fileEditInterceptor: FileEditInterceptor | undefined;
+    if (this.clientCapabilities?.fs?.writeTextFile) {
+      fileEditInterceptor = createFileEditInterceptor(this.logger);
+    }
+
     if (Array.isArray(params.mcpServers)) {
       for (const server of params.mcpServers) {
         if ("type" in server) {
@@ -1166,6 +1188,10 @@ export class ClaudeAcpAgent implements Agent {
                   });
                   await this.updateConfigOption(sessionId, "mode", "plan");
                 },
+                onFileRead: fileEditInterceptor
+                  ? (filePath: string, content: string) =>
+                      fileEditInterceptor.onFileRead(filePath, content)
+                  : undefined,
               }),
             ],
           },
@@ -1206,6 +1232,7 @@ export class ClaudeAcpAgent implements Agent {
       promptRunning: false,
       pendingMessages: new Map(),
       nextPendingOrder: 0,
+      fileEditInterceptor,
     };
 
     const initializationResult = await q.initializationResult();
@@ -1473,6 +1500,7 @@ export function toAcpNotifications(
     registerHooks?: boolean;
     clientCapabilities?: ClientCapabilities;
     parentToolUseId?: string | null;
+    fileEditInterceptor?: FileEditInterceptor;
   },
 ): SessionNotification[] {
   const registerHooks = options?.registerHooks !== false;
@@ -1555,6 +1583,21 @@ export function toAcpNotifications(
               onPostToolUseHook: async (toolUseId, toolInput, toolResponse) => {
                 const toolUse = toolUseCache[toolUseId];
                 if (toolUse) {
+                  // Intercept Edit/Write: revert disk write, route through ACP Review UI
+                  if (
+                    options?.fileEditInterceptor &&
+                    (toolUse.name === "Edit" || toolUse.name === "Write")
+                  ) {
+                    await options.fileEditInterceptor.interceptEditWrite(
+                      toolUse.name,
+                      toolInput,
+                      toolResponse,
+                      async (filePath: string, content: string) => {
+                        await client.writeTextFile({ sessionId, path: filePath, content });
+                      },
+                    );
+                  }
+
                   const editDiff =
                     toolUse.name === "Edit" ? toolUpdateFromEditToolResponse(toolResponse) : {};
                   const update: SessionNotification["update"] = {
@@ -1725,7 +1768,7 @@ export function streamEventToAcpNotifications(
   toolUseCache: ToolUseCache,
   client: AgentSideConnection,
   logger: Logger,
-  options?: { clientCapabilities?: ClientCapabilities },
+  options?: { clientCapabilities?: ClientCapabilities; fileEditInterceptor?: FileEditInterceptor },
 ): SessionNotification[] {
   const event = message.event;
   switch (event.type) {
@@ -1740,6 +1783,7 @@ export function streamEventToAcpNotifications(
         {
           clientCapabilities: options?.clientCapabilities,
           parentToolUseId: message.parent_tool_use_id,
+          fileEditInterceptor: options?.fileEditInterceptor,
         },
       );
     case "content_block_delta":
@@ -1753,6 +1797,7 @@ export function streamEventToAcpNotifications(
         {
           clientCapabilities: options?.clientCapabilities,
           parentToolUseId: message.parent_tool_use_id,
+          fileEditInterceptor: options?.fileEditInterceptor,
         },
       );
     // No content
