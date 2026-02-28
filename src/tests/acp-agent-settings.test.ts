@@ -184,7 +184,7 @@ describe("ClaudeAcpAgent settings", () => {
     await fs.promises.mkdir(projectDir, { recursive: true });
 
     const setModelSpy = vi.fn();
-    querySpy.mockImplementation(({ options }: any) => {
+    querySpy.mockImplementation(({ options: _options }: any) => {
       return {
         initializationResult: async () => ({
           models: [
