@@ -873,6 +873,15 @@ export class ClaudeAcpAgent implements Agent {
               name: "Yes, and auto-accept edits",
               optionId: "acceptEdits",
             },
+            ...(ALLOW_BYPASS
+              ? [
+                  {
+                    kind: "allow_always" as const,
+                    name: "Yes, and bypass permissions",
+                    optionId: "bypassPermissions",
+                  },
+                ]
+              : []),
             { kind: "allow_once", name: "Yes, and manually approve edits", optionId: "default" },
             { kind: "reject_once", name: "No, keep planning", optionId: "plan" },
           ],
@@ -892,7 +901,9 @@ export class ClaudeAcpAgent implements Agent {
         }
         if (
           response.outcome?.outcome === "selected" &&
-          (response.outcome.optionId === "default" || response.outcome.optionId === "acceptEdits")
+          (response.outcome.optionId === "default" ||
+            response.outcome.optionId === "acceptEdits" ||
+            response.outcome.optionId === "bypassPermissions")
         ) {
           session.permissionMode = response.outcome.optionId;
           await this.client.sessionUpdate({
