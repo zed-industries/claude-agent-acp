@@ -157,14 +157,14 @@ type Session = {
 
 type BackgroundTerminal =
   | {
-    handle: TerminalHandle;
-    status: "started";
-    lastOutput: TerminalOutputResponse | null;
-  }
+      handle: TerminalHandle;
+      status: "started";
+      lastOutput: TerminalOutputResponse | null;
+    }
   | {
-    status: "aborted" | "exited" | "killed" | "timedOut";
-    pendingOutput: TerminalOutputResponse;
-  };
+      status: "aborted" | "exited" | "killed" | "timedOut";
+      pendingOutput: TerminalOutputResponse;
+    };
 
 /**
  * Extra metadata that can be given when creating a new session.
@@ -681,9 +681,9 @@ export class ClaudeAcpAgent implements Agent {
             const content =
               message.type === "assistant"
                 ? // Handled by stream events above
-                message.message.content.filter(
-                  (item) => !["text", "thinking"].includes(item.type),
-                )
+                  message.message.content.filter(
+                    (item) => !["text", "thinking"].includes(item.type),
+                  )
                 : message.message.content;
 
             for (const notification of toAcpNotifications(
@@ -714,10 +714,7 @@ export class ClaudeAcpAgent implements Agent {
       }
       throw new Error("Session did not end in result");
     } catch (error) {
-      if (
-        error instanceof RequestError ||
-        !(error instanceof Error)
-      ) {
+      if (error instanceof RequestError || !(error instanceof Error)) {
         throw error;
       }
       const message = error.message;
@@ -728,9 +725,7 @@ export class ClaudeAcpAgent implements Agent {
         message.includes("process terminated by signal") ||
         message.includes("Failed to write to process stdin")
       ) {
-        this.logger.error(
-          `Session ${params.sessionId}: Claude Code process died: ${message}`,
-        );
+        this.logger.error(`Session ${params.sessionId}: Claude Code process died: ${message}`);
         session.healthy = false;
         session.input.end();
         delete this.sessions[params.sessionId];
@@ -1387,10 +1382,10 @@ function getAvailableSlashCommands(commands: SlashCommand[]): AvailableCommand[]
     .map((command) => {
       const input = command.argumentHint
         ? {
-          hint: Array.isArray(command.argumentHint)
-            ? command.argumentHint.join(" ")
-            : command.argumentHint,
-        }
+            hint: Array.isArray(command.argumentHint)
+              ? command.argumentHint.join(" ")
+              : command.argumentHint,
+          }
         : null;
       let name = command.name;
       if (command.name.endsWith(" (MCP)")) {
