@@ -61,7 +61,8 @@
   "license": "Apache-2.0",
   "dependencies": {
     "@agentclientprotocol/sdk": "0.14.1",
-    "@anthropic-ai/claude-agent-sdk": "0.2.62"
+    "@anthropic-ai/claude-agent-sdk": "0.2.62",
+    "zod": "^3.25.0 || ^4.0.0"
   },
   "devDependencies": {
     "@anthropic-ai/sdk": "0.78.0",
