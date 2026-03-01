@@ -23,7 +23,8 @@ import {
   toolUpdateFromToolResult,
   toolUpdateFromEditToolResponse,
 } from "../tools.js";
-import { toAcpNotifications, promptToClaude } from "../acp-agent.js";
+import { toAcpNotifications, promptToClaude, ClaudeAcpAgent, type ToolUseCache } from "../acp-agent.js";
+import { Pushable } from "../utils.js";
 import { query, SDKAssistantMessage } from "@anthropic-ai/claude-agent-sdk";
 import { randomUUID } from "crypto";
 import type {
@@ -1226,5 +1227,135 @@ describe("permission requests", () => {
       expect(requestStructure.toolCall.content).toBeDefined();
       expect(Array.isArray(requestStructure.toolCall.content)).toBe(true);
     }
+  });
+});
+
+describe("stop reason propagation", () => {
+  function createMockAgent() {
+    const mockClient = {
+      sessionUpdate: async () => {},
+    } as unknown as AgentSideConnection;
+    return new ClaudeAcpAgent(mockClient, { log: () => {}, error: () => {} });
+  }
+
+  function createResultMessage(overrides: {
+    subtype: "success" | "error_during_execution";
+    stop_reason: string | null;
+    is_error: boolean;
+    result?: string;
+    errors?: string[];
+  }) {
+    return {
+      type: "result" as const,
+      subtype: overrides.subtype,
+      stop_reason: overrides.stop_reason,
+      is_error: overrides.is_error,
+      result: overrides.result ?? "",
+      errors: overrides.errors ?? [],
+      duration_ms: 0,
+      duration_api_ms: 0,
+      num_turns: 1,
+      total_cost_usd: 0,
+      usage: {
+        input_tokens: 10,
+        output_tokens: 5,
+        cache_read_input_tokens: 0,
+        cache_creation_input_tokens: 0,
+      },
+      modelUsage: {},
+      permission_denials: [],
+      uuid: randomUUID(),
+      session_id: "test-session",
+    };
+  }
+
+  function* messageGenerator(messages: any[]) {
+    yield* messages;
+  }
+
+  function injectSession(agent: ClaudeAcpAgent, messages: any[]) {
+    const gen = messageGenerator(messages);
+    agent.sessions["test-session"] = {
+      query: gen as any,
+      input: new Pushable(),
+      cancelled: false,
+      permissionMode: "default",
+      settingsManager: {} as any,
+      accumulatedUsage: { inputTokens: 0, outputTokens: 0, cachedReadTokens: 0, cachedWriteTokens: 0 },
+      configOptions: [],
+      promptRunning: false,
+      pendingMessages: new Map(),
+      nextPendingOrder: 0,
+    };
+  }
+
+  it("should return max_tokens when success result has stop_reason max_tokens", async () => {
+    const agent = createMockAgent();
+    injectSession(agent, [
+      createResultMessage({ subtype: "success", stop_reason: "max_tokens", is_error: false }),
+    ]);
+
+    const response = await agent.prompt({
+      sessionId: "test-session",
+      prompt: [{ type: "text", text: "test" }],
+    });
+
+    expect(response.stopReason).toBe("max_tokens");
+  });
+
+  it("should return max_tokens when success result has stop_reason max_tokens and is_error true", async () => {
+    const agent = createMockAgent();
+    injectSession(agent, [
+      createResultMessage({ subtype: "success", stop_reason: "max_tokens", is_error: true, result: "Token limit reached" }),
+    ]);
+
+    const response = await agent.prompt({
+      sessionId: "test-session",
+      prompt: [{ type: "text", text: "test" }],
+    });
+
+    expect(response.stopReason).toBe("max_tokens");
+  });
+
+  it("should return max_tokens when error_during_execution has stop_reason max_tokens", async () => {
+    const agent = createMockAgent();
+    injectSession(agent, [
+      createResultMessage({ subtype: "error_during_execution", stop_reason: "max_tokens", is_error: true, errors: ["some error"] }),
+    ]);
+
+    const response = await agent.prompt({
+      sessionId: "test-session",
+      prompt: [{ type: "text", text: "test" }],
+    });
+
+    expect(response.stopReason).toBe("max_tokens");
+  });
+
+  it("should return end_turn for success with null stop_reason", async () => {
+    const agent = createMockAgent();
+    injectSession(agent, [
+      createResultMessage({ subtype: "success", stop_reason: null, is_error: false }),
+    ]);
+
+    const response = await agent.prompt({
+      sessionId: "test-session",
+      prompt: [{ type: "text", text: "test" }],
+    });
+
+    expect(response.stopReason).toBe("end_turn");
+  });
+
+  it("should throw internal error for success with is_error true and no max_tokens", async () => {
+    const agent = createMockAgent();
+    injectSession(agent, [
+      createResultMessage({ subtype: "success", stop_reason: "end_turn", is_error: true, result: "Something went wrong" }),
+    ]);
+
+    await expect(
+      agent.prompt({
+        sessionId: "test-session",
+        prompt: [{ type: "text", text: "test" }],
+      }),
+    ).rejects.toThrow("Internal error");
   });
 });
