@@ -58,7 +58,7 @@ Rename from `@zed-industries/claude-code-acp` to `@zed-industries/claude-agent-a
 - Update to using the recommended `CLAUDE_CONFIG_DIR` env variable for setting where config files are kept
 - Support /context command
 - Fix incorrect context type mapping for tool calls
-- Fix glob metching for file permissions on Windows
+- Fix glob matching for file permissions on Windows
 - Support the `IS_SANDBOX` env var for supporting bypass permissions in root mode
 - Fix missing notification for entering plan mode
 - Experimental unstable support for listing sessions
