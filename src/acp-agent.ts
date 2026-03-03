@@ -370,28 +370,16 @@ export class ClaudeAcpAgent implements Agent {
   }
 
   async loadSession(params: LoadSessionRequest): Promise<LoadSessionResponse> {
-    let response;
-    try {
-      response = await this.createSession(
-        {
-          cwd: params.cwd,
-          mcpServers: params.mcpServers ?? [],
-          _meta: params._meta,
-        },
-        {
-          resume: params.sessionId,
-        },
-      );
-    } catch (error) {
-      // When resuming a session that has no persisted data on disk (e.g. the
-      // CLI subprocess from session/new exited before writing a .jsonl file),
-      // the subprocess dies immediately and createSession rejects with a
-      // generic -32603 "Query closed before response received" error.
-      //
-      // Re-throw as resourceNotFound (-32002) so callers can fall back to
-      // session/new instead of treating it as an unrecoverable failure.
-      throw RequestError.resourceNotFound(params.sessionId);
-    }
+    const response = await this.createSession(
+      {
+        cwd: params.cwd,
+        mcpServers: params.mcpServers ?? [],
+        _meta: params._meta,
+      },
+      {
+        resume: params.sessionId,
+      },
+    );
 
     await this.replaySessionHistory(params.sessionId);
 
@@ -1220,7 +1208,19 @@ export class ClaudeAcpAgent implements Agent {
       nextPendingOrder: 0,
     };
 
-    const initializationResult = await q.initializationResult();
+    let initializationResult;
+    try {
+      initializationResult = await q.initializationResult();
+    } catch (error) {
+      if (
+        creationOpts.resume &&
+        error instanceof Error &&
+        error.message === "Query closed before response received"
+      ) {
+        throw RequestError.resourceNotFound(sessionId);
+      }
+      throw error;
+    }
 
     const models = await getAvailableModels(q, initializationResult.models, settingsManager);
 
