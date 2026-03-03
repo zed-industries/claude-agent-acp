@@ -473,7 +473,7 @@ export class ClaudeAcpAgent implements Agent {
               case "status": {
                 if (message.status === "compacting") {
                   await this.client.sessionUpdate({
-                    sessionId: params.sessionId,
+                    sessionId: message.session_id,
                     update: {
                       sessionUpdate: "agent_message_chunk",
                       content: { type: "text", text: "Compacting..." },
@@ -487,7 +487,7 @@ export class ClaudeAcpAgent implements Agent {
                 // we set it to zero. The client gets the exact size on the next message.
                 lastAssistantTotalUsage = 0;
                 await this.client.sessionUpdate({
-                  sessionId: params.sessionId,
+                  sessionId: message.session_id,
                   update: {
                     sessionUpdate: "agent_message_chunk",
                     content: { type: "text", text: "\n\nCompacting completed." },
@@ -495,15 +495,24 @@ export class ClaudeAcpAgent implements Agent {
                 });
                 break;
               }
+              case "local_command_output": {
+                await this.client.sessionUpdate({
+                  sessionId: message.session_id,
+                  update: {
+                    sessionUpdate: "agent_message_chunk",
+                    content: { type: "text", text: message.content },
+                  },
+                });
+                break;
+              }
               case "hook_started":
-              case "task_notification":
               case "hook_progress":
               case "hook_response":
               case "files_persisted":
               case "task_started":
+              case "task_notification":
               case "task_progress":
               case "elicitation_complete":
-              case "local_command_output":
                 // Todo: process via status api: https://docs.claude.com/en/docs/claude-code/hooks#hook-output
                 break;
               default:
