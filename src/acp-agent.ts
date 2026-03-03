@@ -1248,24 +1248,6 @@ export class ClaudeAcpAgent implements Agent {
       options,
     });
 
-    this.sessions[sessionId] = {
-      query: q,
-      input: input,
-      cancelled: false,
-      permissionMode,
-      settingsManager,
-      accumulatedUsage: {
-        inputTokens: 0,
-        outputTokens: 0,
-        cachedReadTokens: 0,
-        cachedWriteTokens: 0,
-      },
-      configOptions: [],
-      promptRunning: false,
-      pendingMessages: new Map(),
-      nextPendingOrder: 0,
-    };
-
     let initializationResult;
     try {
       initializationResult = await q.initializationResult();
@@ -1319,7 +1301,24 @@ export class ClaudeAcpAgent implements Agent {
     };
 
     const configOptions = buildConfigOptions(modes, models);
-    this.sessions[sessionId].configOptions = configOptions;
+
+    this.sessions[sessionId] = {
+      query: q,
+      input: input,
+      cancelled: false,
+      permissionMode,
+      settingsManager,
+      accumulatedUsage: {
+        inputTokens: 0,
+        outputTokens: 0,
+        cachedReadTokens: 0,
+        cachedWriteTokens: 0,
+      },
+      configOptions,
+      promptRunning: false,
+      pendingMessages: new Map(),
+      nextPendingOrder: 0,
+    };
 
     return {
       sessionId,
