@@ -9,10 +9,10 @@ import {
   ForkSessionResponse,
   InitializeRequest,
   InitializeResponse,
-  LoadSessionRequest,
-  LoadSessionResponse,
   ListSessionsRequest,
   ListSessionsResponse,
+  LoadSessionRequest,
+  LoadSessionResponse,
   ndJsonStream,
   NewSessionRequest,
   NewSessionResponse,
@@ -25,6 +25,7 @@ import {
   ResumeSessionResponse,
   SessionConfigOption,
   SessionModelState,
+  SessionModeState,
   SessionNotification,
   SetSessionConfigOptionRequest,
   SetSessionConfigOptionResponse,
@@ -36,9 +37,7 @@ import {
   TerminalOutputResponse,
   WriteTextFileRequest,
   WriteTextFileResponse,
-  SessionModeState,
 } from "@agentclientprotocol/sdk";
-import { SettingsManager } from "./settings.js";
 import {
   CanUseTool,
   getSessionMessages,
@@ -49,65 +48,30 @@ import {
   PermissionMode,
   Query,
   query,
-  SDKAssistantMessage,
-  SDKAuthStatusMessage,
-  SDKCompactBoundaryMessage,
-  SDKFilesPersistedEvent,
-  SDKHookProgressMessage,
-  SDKHookResponseMessage,
-  SDKHookStartedMessage,
   SDKPartialAssistantMessage,
   SDKResultMessage,
-  SDKStatusMessage,
-  SDKSystemMessage,
-  SDKTaskNotificationMessage,
-  SDKTaskProgressMessage,
-  SDKTaskStartedMessage,
-  SDKToolProgressMessage,
-  SDKToolUseSummaryMessage,
   SDKUserMessage,
-  SDKUserMessageReplay,
   SlashCommand,
 } from "@anthropic-ai/claude-agent-sdk";
-import * as fs from "node:fs";
-import * as path from "node:path";
-import * as os from "node:os";
-import { nodeToWebReadable, nodeToWebWritable, Pushable, unreachable } from "./utils.js";
-import {
-  toolInfoFromToolUse,
-  planEntries,
-  toolUpdateFromToolResult,
-  toolUpdateFromEditToolResponse,
-  ClaudePlanEntry,
-  registerHookCallback,
-  createPostToolUseHook,
-} from "./tools.js";
 import { ContentBlockParam } from "@anthropic-ai/sdk/resources";
 import { BetaContentBlock, BetaRawContentBlockDelta } from "@anthropic-ai/sdk/resources/beta.mjs";
-import packageJson from "../package.json" with { type: "json" };
 import { randomUUID } from "node:crypto";
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-
-// SDK has an unresolved rate limit type, reconstructing with the rest for now
-type SDKMessageTemp =
-  | SDKAssistantMessage
-  | SDKUserMessage
-  | SDKUserMessageReplay
-  | SDKResultMessage
-  | SDKSystemMessage
-  | SDKPartialAssistantMessage
-  | SDKCompactBoundaryMessage
-  | SDKStatusMessage
-  | SDKHookStartedMessage
-  | SDKHookProgressMessage
-  | SDKHookResponseMessage
-  | SDKToolProgressMessage
-  | SDKAuthStatusMessage
-  | SDKTaskNotificationMessage
-  | SDKTaskStartedMessage
-  | SDKTaskProgressMessage
-  | SDKFilesPersistedEvent
-  | SDKToolUseSummaryMessage;
+import packageJson from "../package.json" with { type: "json" };
+import { SettingsManager } from "./settings.js";
+import {
+  ClaudePlanEntry,
+  createPostToolUseHook,
+  planEntries,
+  registerHookCallback,
+  toolInfoFromToolUse,
+  toolUpdateFromEditToolResponse,
+  toolUpdateFromToolResult,
+} from "./tools.js";
+import { nodeToWebReadable, nodeToWebWritable, Pushable, unreachable } from "./utils.js";
 
 export const CLAUDE_CONFIG_DIR =
   process.env.CLAUDE_CONFIG_DIR ?? path.join(os.homedir(), ".claude");
@@ -455,9 +419,7 @@ export class ClaudeAcpAgent implements Agent {
 
     try {
       while (true) {
-        const { value: message, done } = await (
-          session.query as AsyncGenerator<SDKMessageTemp, void>
-        ).next();
+        const { value: message, done } = await session.query.next();
 
         if (done || !message) {
           if (session.cancelled) {
@@ -485,6 +447,8 @@ export class ClaudeAcpAgent implements Agent {
               case "files_persisted":
               case "task_started":
               case "task_progress":
+              case "elicitation_complete":
+              case "local_command_output":
                 // Todo: process via status api: https://docs.claude.com/en/docs/claude-code/hooks#hook-output
                 break;
               default:
@@ -694,8 +658,9 @@ export class ClaudeAcpAgent implements Agent {
           }
           case "tool_progress":
           case "tool_use_summary":
-            break;
           case "auth_status":
+          case "prompt_suggestion":
+          case "rate_limit_event":
             break;
           default:
             unreachable(message);
