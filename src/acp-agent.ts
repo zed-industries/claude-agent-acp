@@ -9,10 +9,10 @@ import {
   ForkSessionResponse,
   InitializeRequest,
   InitializeResponse,
-  LoadSessionRequest,
-  LoadSessionResponse,
   ListSessionsRequest,
   ListSessionsResponse,
+  LoadSessionRequest,
+  LoadSessionResponse,
   ndJsonStream,
   NewSessionRequest,
   NewSessionResponse,
@@ -25,6 +25,7 @@ import {
   ResumeSessionResponse,
   SessionConfigOption,
   SessionModelState,
+  SessionModeState,
   SessionNotification,
   SetSessionConfigOptionRequest,
   SetSessionConfigOptionResponse,
@@ -36,9 +37,7 @@ import {
   TerminalOutputResponse,
   WriteTextFileRequest,
   WriteTextFileResponse,
-  SessionModeState,
 } from "@agentclientprotocol/sdk";
-import { SettingsManager } from "./settings.js";
 import {
   CanUseTool,
   getSessionMessages,
@@ -49,65 +48,30 @@ import {
   PermissionMode,
   Query,
   query,
-  SDKAssistantMessage,
-  SDKAuthStatusMessage,
-  SDKCompactBoundaryMessage,
-  SDKFilesPersistedEvent,
-  SDKHookProgressMessage,
-  SDKHookResponseMessage,
-  SDKHookStartedMessage,
   SDKPartialAssistantMessage,
   SDKResultMessage,
-  SDKStatusMessage,
-  SDKSystemMessage,
-  SDKTaskNotificationMessage,
-  SDKTaskProgressMessage,
-  SDKTaskStartedMessage,
-  SDKToolProgressMessage,
-  SDKToolUseSummaryMessage,
   SDKUserMessage,
-  SDKUserMessageReplay,
   SlashCommand,
 } from "@anthropic-ai/claude-agent-sdk";
-import * as fs from "node:fs";
-import * as path from "node:path";
-import * as os from "node:os";
-import { nodeToWebReadable, nodeToWebWritable, Pushable, unreachable } from "./utils.js";
-import {
-  toolInfoFromToolUse,
-  planEntries,
-  toolUpdateFromToolResult,
-  toolUpdateFromEditToolResponse,
-  ClaudePlanEntry,
-  registerHookCallback,
-  createPostToolUseHook,
-} from "./tools.js";
 import { ContentBlockParam } from "@anthropic-ai/sdk/resources";
 import { BetaContentBlock, BetaRawContentBlockDelta } from "@anthropic-ai/sdk/resources/beta.mjs";
-import packageJson from "../package.json" with { type: "json" };
 import { randomUUID } from "node:crypto";
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-
-// SDK has an unresolved rate limit type, reconstructing with the rest for now
-type SDKMessageTemp =
-  | SDKAssistantMessage
-  | SDKUserMessage
-  | SDKUserMessageReplay
-  | SDKResultMessage
-  | SDKSystemMessage
-  | SDKPartialAssistantMessage
-  | SDKCompactBoundaryMessage
-  | SDKStatusMessage
-  | SDKHookStartedMessage
-  | SDKHookProgressMessage
-  | SDKHookResponseMessage
-  | SDKToolProgressMessage
-  | SDKAuthStatusMessage
-  | SDKTaskNotificationMessage
-  | SDKTaskStartedMessage
-  | SDKTaskProgressMessage
-  | SDKFilesPersistedEvent
-  | SDKToolUseSummaryMessage;
+import packageJson from "../package.json" with { type: "json" };
+import { SettingsManager } from "./settings.js";
+import {
+  ClaudePlanEntry,
+  createPostToolUseHook,
+  planEntries,
+  registerHookCallback,
+  toolInfoFromToolUse,
+  toolUpdateFromEditToolResponse,
+  toolUpdateFromToolResult,
+} from "./tools.js";
+import { nodeToWebReadable, nodeToWebWritable, Pushable, unreachable } from "./utils.js";
 
 export const CLAUDE_CONFIG_DIR =
   process.env.CLAUDE_CONFIG_DIR ?? path.join(os.homedir(), ".claude");
@@ -229,6 +193,43 @@ function isStaticBinary(): boolean {
 // Bypass Permissions doesn't work if we are a root/sudo user
 const IS_ROOT = (process.geteuid?.() ?? process.getuid?.()) === 0;
 const ALLOW_BYPASS = !IS_ROOT || !!process.env.IS_SANDBOX;
+
+const PERMISSION_MODE_ALIASES: Record<string, PermissionMode> = {
+  default: "default",
+  acceptedits: "acceptEdits",
+  dontask: "dontAsk",
+  plan: "plan",
+  bypasspermissions: "bypassPermissions",
+  bypass: "bypassPermissions",
+};
+
+export function resolvePermissionMode(defaultMode?: unknown): PermissionMode {
+  if (defaultMode === undefined) {
+    return "default";
+  }
+
+  if (typeof defaultMode !== "string") {
+    throw new Error("Invalid permissions.defaultMode: expected a string.");
+  }
+
+  const normalized = defaultMode.trim().toLowerCase();
+  if (normalized === "") {
+    throw new Error("Invalid permissions.defaultMode: expected a non-empty string.");
+  }
+
+  const mapped = PERMISSION_MODE_ALIASES[normalized];
+  if (!mapped) {
+    throw new Error(`Invalid permissions.defaultMode: ${defaultMode}.`);
+  }
+
+  if (mapped === "bypassPermissions" && !ALLOW_BYPASS) {
+    throw new Error(
+      "Invalid permissions.defaultMode: bypassPermissions is not available when running as root.",
+    );
+  }
+
+  return mapped;
+}
 
 // Implement the ACP Agent interface
 export class ClaudeAcpAgent implements Agent {
@@ -455,9 +456,7 @@ export class ClaudeAcpAgent implements Agent {
 
     try {
       while (true) {
-        const { value: message, done } = await (
-          session.query as AsyncGenerator<SDKMessageTemp, void>
-        ).next();
+        const { value: message, done } = await session.query.next();
 
         if (done || !message) {
           if (session.cancelled) {
@@ -485,6 +484,8 @@ export class ClaudeAcpAgent implements Agent {
               case "files_persisted":
               case "task_started":
               case "task_progress":
+              case "elicitation_complete":
+              case "local_command_output":
                 // Todo: process via status api: https://docs.claude.com/en/docs/claude-code/hooks#hook-output
                 break;
               default:
@@ -542,12 +543,18 @@ export class ClaudeAcpAgent implements Agent {
                 if (message.result.includes("Please run /login")) {
                   throw RequestError.authRequired();
                 }
+                if (message.stop_reason === "max_tokens") {
+                  return { stopReason: "max_tokens", usage };
+                }
                 if (message.is_error) {
                   throw RequestError.internalError(undefined, message.result);
                 }
                 return { stopReason: "end_turn", usage };
               }
               case "error_during_execution":
+                if (message.stop_reason === "max_tokens") {
+                  return { stopReason: "max_tokens", usage };
+                }
                 if (message.is_error) {
                   throw RequestError.internalError(
                     undefined,
@@ -694,8 +701,9 @@ export class ClaudeAcpAgent implements Agent {
           }
           case "tool_progress":
           case "tool_use_summary":
-            break;
           case "auth_status":
+          case "prompt_suggestion":
+          case "rate_limit_event":
             break;
           default:
             unreachable(message);
@@ -1082,7 +1090,9 @@ export class ClaudeAcpAgent implements Agent {
       }
     }
 
-    const permissionMode = "default";
+    const permissionMode = resolvePermissionMode(
+      settingsManager.getSettings().permissions?.defaultMode,
+    );
 
     // Extract options from _meta if provided
     const userProvidedOptions = (params._meta as NewSessionMeta | undefined)?.claudeCode?.options;
@@ -1294,6 +1304,79 @@ function buildConfigOptions(
   ];
 }
 
+// Claude Code CLI persists display strings like "opus[1m]" in settings,
+// but the SDK model list uses IDs like "claude-opus-4-6-1m".
+const MODEL_CONTEXT_HINT_PATTERN = /\[(\d+m)\]$/i;
+
+function tokenizeModelPreference(model: string): { tokens: string[]; contextHint?: string } {
+  const lower = model.trim().toLowerCase();
+  const contextHint = lower.match(MODEL_CONTEXT_HINT_PATTERN)?.[1]?.toLowerCase();
+
+  const normalized = lower.replace(MODEL_CONTEXT_HINT_PATTERN, " $1 ");
+  const rawTokens = normalized.split(/[^a-z0-9]+/).filter(Boolean);
+  const tokens = rawTokens
+    .map((token) => {
+      if (token === "opusplan") return "opus";
+      if (token === "best" || token === "default") return "";
+      return token;
+    })
+    .filter((token) => token && token !== "claude")
+    .filter((token) => /[a-z]/.test(token) || token.endsWith("m"));
+
+  return { tokens, contextHint };
+}
+
+function scoreModelMatch(model: ModelInfo, tokens: string[], contextHint?: string): number {
+  const haystack = `${model.value} ${model.displayName}`.toLowerCase();
+  let score = 0;
+  for (const token of tokens) {
+    if (haystack.includes(token)) {
+      score += token === contextHint ? 3 : 1;
+    }
+  }
+  return score;
+}
+
+function resolveModelPreference(models: ModelInfo[], preference: string): ModelInfo | null {
+  const trimmed = preference.trim();
+  if (!trimmed) return null;
+
+  const lower = trimmed.toLowerCase();
+
+  // Exact match on value or display name
+  const directMatch = models.find(
+    (model) =>
+      model.value === trimmed ||
+      model.value.toLowerCase() === lower ||
+      model.displayName.toLowerCase() === lower,
+  );
+  if (directMatch) return directMatch;
+
+  // Substring match
+  const includesMatch = models.find((model) => {
+    const value = model.value.toLowerCase();
+    const display = model.displayName.toLowerCase();
+    return value.includes(lower) || display.includes(lower) || lower.includes(value);
+  });
+  if (includesMatch) return includesMatch;
+
+  // Tokenized matching for aliases like "opus[1m]"
+  const { tokens, contextHint } = tokenizeModelPreference(trimmed);
+  if (tokens.length === 0) return null;
+
+  let bestMatch: ModelInfo | null = null;
+  let bestScore = 0;
+  for (const model of models) {
+    const score = scoreModelMatch(model, tokens, contextHint);
+    if (0 < score && (!bestMatch || bestScore < score)) {
+      bestMatch = model;
+      bestScore = score;
+    }
+  }
+
+  return bestMatch;
+}
+
 async function getAvailableModels(
   query: Query,
   models: ModelInfo[],
@@ -1304,14 +1387,7 @@ async function getAvailableModels(
   let currentModel = models[0];
 
   if (settings.model) {
-    const match = models.find(
-      (m) =>
-        m.value === settings.model ||
-        m.value.includes(settings.model!) ||
-        settings.model!.includes(m.value) ||
-        m.displayName.toLowerCase() === settings.model!.toLowerCase() ||
-        m.displayName.toLowerCase().includes(settings.model!.toLowerCase()),
-    );
+    const match = resolveModelPreference(models, settings.model);
     if (match) {
       currentModel = match;
     }

@@ -14,7 +14,12 @@ import { CLAUDE_CONFIG_DIR } from "./acp-agent.js";
  * Docs: https://code.claude.com/docs/en/iam#tool-specific-permission-rules
  */
 
+export interface PermissionSettings {
+  defaultMode?: string;
+}
+
 export interface ClaudeCodeSettings {
+  permissions?: PermissionSettings;
   env?: Record<string, string>;
   model?: string;
 }
@@ -161,6 +166,13 @@ export class SettingsManager {
 
       if (settings.model) {
         merged.model = settings.model;
+      }
+
+      if (settings.permissions?.defaultMode !== undefined) {
+        merged.permissions = {
+          ...merged.permissions,
+          defaultMode: settings.permissions.defaultMode,
+        };
       }
     }
 
