@@ -467,20 +467,38 @@ export class ClaudeAcpAgent implements Agent {
 
         switch (message.type) {
           case "system":
-            if (message.subtype === "compact_boundary") {
-              // We don't know the exact size, but since we compacted,
-              // we set it to zero. The client gets the exact size on the next message.
-              lastAssistantTotalUsage = 0;
-            }
             switch (message.subtype) {
               case "init":
                 break;
-              case "compact_boundary":
+              case "status": {
+                if (message.status === "compacting") {
+                  await this.client.sessionUpdate({
+                    sessionId: params.sessionId,
+                    update: {
+                      sessionUpdate: "agent_message_chunk",
+                      content: { type: "text", text: "Compacting..." },
+                    },
+                  });
+                }
+                break;
+              }
+              case "compact_boundary": {
+                // We don't know the exact size, but since we compacted,
+                // we set it to zero. The client gets the exact size on the next message.
+                lastAssistantTotalUsage = 0;
+                await this.client.sessionUpdate({
+                  sessionId: params.sessionId,
+                  update: {
+                    sessionUpdate: "agent_message_chunk",
+                    content: { type: "text", text: "\n\nCompacting completed." },
+                  },
+                });
+                break;
+              }
               case "hook_started":
               case "task_notification":
               case "hook_progress":
               case "hook_response":
-              case "status":
               case "files_persisted":
               case "task_started":
               case "task_progress":
