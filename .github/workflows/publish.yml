@@ -54,7 +54,7 @@ jobs:
 
       - name: Build binary
         run: |
-          bun build src/static-entry.ts \
+          bun build src/index.ts \
             --compile \
             --target ${{ matrix.target }} \
             --define 'process.env.CLAUDE_AGENT_ACP_IS_SINGLE_FILE_BUN="true"' \
