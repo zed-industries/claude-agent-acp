@@ -1,5 +1,31 @@
 # Changelog
 
+## 0.20.0
+
+- Update to @anthropic-ai/claude-agent-sdk@0.2.63
+- Respect user settings for permission mode and model selection
+- Better handling of concurrent prompts
+- Support --cli for node as well
+- Propagate max_tokens stop reason instead of throwing internal error
+- fix: throw resourceNotFound when loadSession fails to resume
+- fix: add missing zod dependency
+- Surface better error message when Claude Code process exits unexpectedly
+
+## 0.19.2
+
+- Fix for broken notifications when reloading session messages
+
+## 0.19.1
+
+- Support windows arm builds and clean up artifact files
+
+## 0.19.0
+
+- Update to @anthropic-ai/claude-agent-sdk@0.2.62
+- Use SDK functions for listing and loading session history
+- Build single-file executables using bun.
+- Fix for overwritten disallowed tools.
+
 ## 0.18.0
 
 - Switch over to built-in Claude tools. We no longer replicate specific ACP tools and just rely on sending updates based on Claude's internal tools. This means it won't use client capabilities for files or terminals, but also means there will be less difference and hopefully issues arising from the differences in behavior.
