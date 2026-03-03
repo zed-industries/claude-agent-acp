@@ -23,12 +23,7 @@ import {
   toolUpdateFromToolResult,
   toolUpdateFromEditToolResponse,
 } from "../tools.js";
-import {
-  toAcpNotifications,
-  promptToClaude,
-  ClaudeAcpAgent,
-  type ToolUseCache,
-} from "../acp-agent.js";
+import { toAcpNotifications, promptToClaude, ClaudeAcpAgent } from "../acp-agent.js";
 import { Pushable } from "../utils.js";
 import { query, SDKAssistantMessage } from "@anthropic-ai/claude-agent-sdk";
 import { randomUUID } from "crypto";
