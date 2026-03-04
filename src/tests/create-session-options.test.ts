@@ -151,6 +151,60 @@ describe("createSession options merging", () => {
     expect(capturedOptions!.hooks?.PostToolUse).toHaveLength(2);
   });
 
+  it("inherits HOME and PATH from process.env when no env is provided", async () => {
+    await agent.newSession({
+      cwd: "/test",
+      mcpServers: [],
+    });
+
+    expect(capturedOptions!.env).toMatchObject({
+      HOME: process.env.HOME,
+      PATH: process.env.PATH,
+    });
+  });
+
+  it("merges user-provided env vars on top of process.env", async () => {
+    await agent.newSession({
+      cwd: "/test",
+      mcpServers: [],
+      _meta: {
+        claudeCode: {
+          options: {
+            env: {
+              CUSTOM_VAR: "custom-value",
+            },
+          },
+        },
+      },
+    });
+
+    expect(capturedOptions!.env).toMatchObject({
+      HOME: process.env.HOME,
+      PATH: process.env.PATH,
+      CUSTOM_VAR: "custom-value",
+    });
+  });
+
+  it("allows user-provided env vars to override process.env entries", async () => {
+    await agent.newSession({
+      cwd: "/test",
+      mcpServers: [],
+      _meta: {
+        claudeCode: {
+          options: {
+            env: {
+              HOME: "/custom/home",
+            },
+          },
+        },
+      },
+    });
+
+    expect(capturedOptions!.env).toMatchObject({
+      HOME: "/custom/home",
+    });
+  });
+
   it("merges user-provided mcpServers with ACP mcpServers", async () => {
     await agent.newSession({
       cwd: "/test",

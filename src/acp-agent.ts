@@ -1240,6 +1240,7 @@ export class ClaudeAcpAgent implements Agent {
       ...(maxThinkingTokens !== undefined && { maxThinkingTokens }),
       ...userProvidedOptions,
       env: {
+        ...process.env,
         ...userProvidedOptions?.env,
         ...createEnvForGateway(this.gatewayAuthMeta),
       },
