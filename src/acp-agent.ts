@@ -1326,7 +1326,18 @@ export class ClaudeAcpAgent implements Agent {
       throw error;
     }
 
-    if (shouldHideClaudeAuth() && initializationResult.account.subscriptionType) {
+    // Only block claude.ai subscriptions if no alternative auth method is configured
+    const hasAlternativeAuth =
+      this.gatewayAuthMeta ||
+      process.env.ANTHROPIC_API_KEY ||
+      process.env.CLAUDE_CODE_USE_FOUNDRY ||
+      process.env.CLAUDE_CODE_USE_BEDROCK;
+
+    if (
+      shouldHideClaudeAuth() &&
+      initializationResult.account.subscriptionType &&
+      !hasAlternativeAuth
+    ) {
       throw RequestError.authRequired(
         undefined,
         "This integration does not support using claude.ai subscriptions.",
