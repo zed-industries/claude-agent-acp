@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.20.2
+
+- Update to @anthropic-ai/claude-agent-sdk@0.2.68
+
 ## 0.20.1
 
 - fix: inherit process.env when spawning agent subprocess
