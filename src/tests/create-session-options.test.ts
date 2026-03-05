@@ -181,10 +181,17 @@ describe("createSession options merging", () => {
     expect(capturedOptions?.env?.CUSTOM_VAR).toBe("custom-value");
   });
 
-  it("enables agent teams via env var", async () => {
+  it("allows enabling agent teams via user-provided env vars", async () => {
     await agent.newSession({
       cwd: "/test",
       mcpServers: [],
+      _meta: {
+        claudeCode: {
+          options: {
+            env: { CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS: "1" },
+          },
+        },
+      },
     });
 
     expect(capturedOptions?.env?.CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS).toBe("1");

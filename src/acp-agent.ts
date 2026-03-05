@@ -563,6 +563,9 @@ export class ClaudeAcpAgent implements Agent {
           if (raceResult.kind === "timeout") {
             // Save the still-pending promise so the next prompt() reuses it.
             session.pendingNext = nextPromise;
+            if (session.cancelled) {
+              return { stopReason: "cancelled" };
+            }
             return promptResult;
           }
 
@@ -824,7 +827,7 @@ export class ClaudeAcpAgent implements Agent {
                 handedOff = true;
                 // the current loop stops with end_turn,
                 // the loop of the next prompt continues running
-                return { stopReason: "end_turn" };
+                return promptResult ?? { stopReason: "end_turn" };
               }
             }
 
@@ -1374,7 +1377,6 @@ export class ClaudeAcpAgent implements Agent {
         ...process.env,
         ...userProvidedOptions?.env,
         ...createEnvForGateway(this.gatewayAuthMeta),
-        CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS: "1",
       },
       // Override certain fields that must be controlled by ACP
       cwd: params.cwd,
