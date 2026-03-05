@@ -563,6 +563,75 @@ describe("tool conversions", () => {
     });
   });
 
+  it("should handle TeamCreate tool calls", () => {
+    const tool_use = {
+      type: "tool_use",
+      id: "toolu_01TEAM001",
+      name: "TeamCreate",
+      input: { name: "research-team", members: ["agent-a", "agent-b"] },
+    };
+
+    expect(toolInfoFromToolUse(tool_use)).toStrictEqual({
+      kind: "other",
+      title: "TeamCreate",
+      content: [
+        {
+          type: "content",
+          content: {
+            type: "text",
+            text: '```json\n{\n  "name": "research-team",\n  "members": [\n    "agent-a",\n    "agent-b"\n  ]\n}```',
+          },
+        },
+      ],
+    });
+  });
+
+  it("should handle SendMessage tool calls", () => {
+    const tool_use = {
+      type: "tool_use",
+      id: "toolu_01MSG001",
+      name: "SendMessage",
+      input: { to: "agent-a", message: "hello" },
+    };
+
+    expect(toolInfoFromToolUse(tool_use)).toStrictEqual({
+      kind: "other",
+      title: "SendMessage",
+      content: [
+        {
+          type: "content",
+          content: {
+            type: "text",
+            text: '```json\n{\n  "to": "agent-a",\n  "message": "hello"\n}```',
+          },
+        },
+      ],
+    });
+  });
+
+  it("should handle TeamDelete tool calls", () => {
+    const tool_use = {
+      type: "tool_use",
+      id: "toolu_01TEAM002",
+      name: "TeamDelete",
+      input: { name: "research-team" },
+    };
+
+    expect(toolInfoFromToolUse(tool_use)).toStrictEqual({
+      kind: "other",
+      title: "TeamDelete",
+      content: [
+        {
+          type: "content",
+          content: {
+            type: "text",
+            text: '```json\n{\n  "name": "research-team"\n}```',
+          },
+        },
+      ],
+    });
+  });
+
   it("should handle plan entries", () => {
     const received: SDKAssistantMessage = {
       type: "assistant",
