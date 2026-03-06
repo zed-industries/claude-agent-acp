@@ -102,7 +102,7 @@ describe("createSession options merging", () => {
     expect(capturedOptions!.disallowedTools).toContain("AskUserQuestion");
   });
 
-  it("includes both user and built-in disallowed tools when disableBuiltInTools is true", async () => {
+  it("sets tools to empty array when disableBuiltInTools is true", async () => {
     await agent.newSession({
       cwd: "/test",
       mcpServers: [],
@@ -116,15 +116,11 @@ describe("createSession options merging", () => {
       },
     });
 
-    const disallowed = capturedOptions!.disallowedTools!;
-    // User-provided
-    expect(disallowed).toContain("CustomTool");
-    // ACP internal
-    expect(disallowed).toContain("AskUserQuestion");
-    // Built-in tools disabled by disableBuiltInTools
-    expect(disallowed).toContain("Read");
-    expect(disallowed).toContain("Write");
-    expect(disallowed).toContain("Bash");
+    // disableBuiltInTools removes all built-in tools from context
+    expect(capturedOptions!.tools).toEqual([]);
+    // User-provided and ACP disallowedTools still apply
+    expect(capturedOptions!.disallowedTools).toContain("CustomTool");
+    expect(capturedOptions!.disallowedTools).toContain("AskUserQuestion");
   });
 
   it("merges user-provided hooks with ACP hooks", async () => {
@@ -197,6 +193,64 @@ describe("createSession options merging", () => {
     });
 
     expect(capturedOptions?.env?.HOME).toBe("/custom/home");
+  });
+
+  it("defaults tools to claude_code preset when not provided", async () => {
+    await agent.newSession({
+      cwd: "/test",
+      mcpServers: [],
+    });
+
+    expect(capturedOptions!.tools).toEqual({ type: "preset", preset: "claude_code" });
+  });
+
+  it("passes through user-provided tools string array", async () => {
+    await agent.newSession({
+      cwd: "/test",
+      mcpServers: [],
+      _meta: {
+        claudeCode: {
+          options: {
+            tools: ["Read", "Glob"],
+          },
+        },
+      },
+    });
+
+    expect(capturedOptions!.tools).toEqual(["Read", "Glob"]);
+  });
+
+  it("explicit tools array takes precedence over disableBuiltInTools", async () => {
+    await agent.newSession({
+      cwd: "/test",
+      mcpServers: [],
+      _meta: {
+        disableBuiltInTools: true,
+        claudeCode: {
+          options: {
+            tools: ["Read", "Glob"],
+          },
+        },
+      },
+    });
+
+    expect(capturedOptions!.tools).toEqual(["Read", "Glob"]);
+  });
+
+  it("passes through empty tools array to disable all built-in tools", async () => {
+    await agent.newSession({
+      cwd: "/test",
+      mcpServers: [],
+      _meta: {
+        claudeCode: {
+          options: {
+            tools: [],
+          },
+        },
+      },
+    });
+
+    expect(capturedOptions!.tools).toEqual([]);
   });
 
   it("merges user-provided mcpServers with ACP mcpServers", async () => {
