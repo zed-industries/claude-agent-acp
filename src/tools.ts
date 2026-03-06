@@ -728,6 +728,25 @@ const toolUseCallbacks: {
   };
 } = {};
 
+/*
+ * When the SDK fires PostToolUse before the streaming handler has called
+ * registerHookCallback(), we store a deferred here.  registerHookCallback()
+ * checks this map and resolves the deferred so the waiting hook can proceed.
+ */
+const pendingHooks: {
+  [toolUseId: string]: {
+    resolve: (
+      cb: (toolUseID: string, toolInput: unknown, toolResponse: unknown) => Promise<void>,
+    ) => void;
+    promise: Promise<
+      (toolUseID: string, toolInput: unknown, toolResponse: unknown) => Promise<void>
+    >;
+  };
+} = {};
+
+/** Maximum time (ms) to wait for a callback registration before giving up. */
+const HOOK_WAIT_TIMEOUT_MS = 5_000;
+
 /* Setup callbacks that will be called when receiving hooks from Claude Code */
 export const registerHookCallback = (
   toolUseID: string,
@@ -744,6 +763,12 @@ export const registerHookCallback = (
   toolUseCallbacks[toolUseID] = {
     onPostToolUseHook,
   };
+
+  // If a PostToolUse hook is already waiting for this ID, hand it the callback.
+  if (onPostToolUseHook && pendingHooks[toolUseID]) {
+    pendingHooks[toolUseID].resolve(onPostToolUseHook);
+    delete pendingHooks[toolUseID];
+  }
 };
 
 /* A callback for Claude Code that is called when receiving a PostToolUse hook */
@@ -767,8 +792,32 @@ export const createPostToolUseHook =
           await onPostToolUseHook(toolUseID, input.tool_input, input.tool_response);
           delete toolUseCallbacks[toolUseID]; // Cleanup after execution
         } else {
-          logger.error(`No onPostToolUseHook found for tool use ID: ${toolUseID}`);
-          delete toolUseCallbacks[toolUseID];
+          // The SDK fired PostToolUse before the streaming handler called
+          // registerHookCallback().  Wait for registration (with timeout).
+          let resolve: (typeof pendingHooks)[string]["resolve"];
+          const promise = new Promise<
+            (toolUseID: string, toolInput: unknown, toolResponse: unknown) => Promise<void>
+          >((r) => {
+            resolve = r;
+          });
+          pendingHooks[toolUseID] = { resolve: resolve!, promise };
+
+          const cb = await Promise.race([
+            promise,
+            new Promise<null>((r) => setTimeout(() => r(null), HOOK_WAIT_TIMEOUT_MS)),
+          ]);
+
+          delete pendingHooks[toolUseID];
+
+          if (cb) {
+            await cb(toolUseID, input.tool_input, input.tool_response);
+            delete toolUseCallbacks[toolUseID];
+          } else {
+            logger.error(
+              `PostToolUse hook timed out waiting for callback registration: ${toolUseID}`,
+            );
+            delete toolUseCallbacks[toolUseID];
+          }
         }
       }
     }
