@@ -748,7 +748,7 @@ export const registerHookCallback = (
 /* A callback for Claude Code that is called when receiving a PostToolUse hook */
 export const createPostToolUseHook =
   (
-    logger: Logger = console,
+    _logger: Logger = console,
     options?: {
       onEnterPlanMode?: () => Promise<void>;
     },
@@ -766,7 +766,11 @@ export const createPostToolUseHook =
           await onPostToolUseHook(toolUseID, input.tool_input, input.tool_response);
           delete toolUseCallbacks[toolUseID]; // Cleanup after execution
         } else {
-          logger.error(`No onPostToolUseHook found for tool use ID: ${toolUseID}`);
+          // No callback registered — expected for subagent tools (the SDK
+          // fires PostToolUse during subagent execution before we see the
+          // tool_use block) and server_tool_use (API-side tools like
+          // WebSearch).  Silently ignore: logging here goes to stderr,
+          // which acp.el surfaces as user-visible "Notices".
           delete toolUseCallbacks[toolUseID];
         }
       }
