@@ -110,6 +110,7 @@ export function toolInfoFromToolUse(
   const name = toolUse.name;
 
   switch (name) {
+    case "Agent":
     case "Task": {
       const input = toolUse.input as AgentInput | BashInput;
       return {
