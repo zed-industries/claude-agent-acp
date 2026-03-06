@@ -49,8 +49,12 @@ import {
   PermissionMode,
   Query,
   query,
+  SDKMessage,
   SDKPartialAssistantMessage,
   SDKResultMessage,
+  SDKTaskNotificationMessage,
+  SDKTaskProgressMessage,
+  SDKTaskStartedMessage,
   SDKUserMessage,
   SlashCommand,
 } from "@anthropic-ai/claude-agent-sdk";
@@ -117,7 +121,14 @@ type Session = {
   promptRunning: boolean;
   pendingMessages: Map<string, { resolve: (cancelled: boolean) => void; order: number }>;
   nextPendingOrder: number;
+  // Stores a pending .next() promise from the generator when a team-wait timeout fires.
+  // The next prompt() call reuses this instead of calling .next() again.
+  pendingNext?: Promise<IteratorResult<SDKMessage, void>>;
 };
+
+type TeamWaitRaceResult =
+  | { kind: "message"; result: IteratorResult<SDKMessage, void> }
+  | { kind: "timeout" };
 
 type BackgroundTerminal =
   | {
@@ -513,16 +524,70 @@ export class ClaudeAcpAgent implements Agent {
 
     session.promptRunning = true;
     let handedOff = false;
+    let promptResult: PromptResponse | null = null;
+    let hasTeamActivity = false;
+    let teamActivityInCurrentTurn = false;
+    let resultCount = 0;
+
+    // How long to wait for follow-up messages after a result when teams are active.
+    // The CLI's team monitoring loop polls every 500ms and injects new prompts.
+    // First result: 30s (subagent may still be running).
+    // Subsequent results without new team activity: 5s (cleanup is done, just waiting for confirmation).
+    const TEAM_IDLE_TIMEOUT_INITIAL_MS = 30_000;
+    const TEAM_IDLE_TIMEOUT_SHORT_MS = 5_000;
 
     try {
       while (true) {
-        const { value: message, done } = await session.query.next();
+        let message: SDKMessage;
 
-        if (done || !message) {
-          if (session.cancelled) {
-            return { stopReason: "cancelled" };
+        if (promptResult && hasTeamActivity) {
+          // After receiving a result with active teams, race .next() with a timeout.
+          // If no new messages arrive within the timeout, return the result.
+          // Use a shorter timeout for subsequent results (cleanup turns).
+          const timeoutMs =
+            resultCount <= 1 || teamActivityInCurrentTurn
+              ? TEAM_IDLE_TIMEOUT_INITIAL_MS
+              : TEAM_IDLE_TIMEOUT_SHORT_MS;
+          const nextPromise = session.pendingNext ?? session.query.next();
+          session.pendingNext = undefined;
+
+          let timer: ReturnType<typeof setTimeout>;
+          const raceResult = await Promise.race([
+            nextPromise.then((result): TeamWaitRaceResult => ({ kind: "message", result })),
+            new Promise<TeamWaitRaceResult>((resolve) => {
+              timer = setTimeout(() => resolve({ kind: "timeout" }), timeoutMs);
+            }),
+          ]);
+          clearTimeout(timer!);
+
+          if (raceResult.kind === "timeout") {
+            // Save the still-pending promise so the next prompt() reuses it.
+            session.pendingNext = nextPromise;
+            if (session.cancelled) {
+              return { stopReason: "cancelled" };
+            }
+            return promptResult;
           }
-          break;
+
+          const { value, done } = raceResult.result;
+          if (done || !value) {
+            return promptResult;
+          }
+          message = value;
+        } else {
+          // Normal read (or resume from a saved pending next).
+          const nextPromise = session.pendingNext ?? session.query.next();
+          session.pendingNext = undefined;
+          const { value, done } = await nextPromise;
+
+          if (done || !value) {
+            if (session.cancelled) {
+              return { stopReason: "cancelled" };
+            }
+            if (promptResult) return promptResult;
+            break;
+          }
+          message = value;
         }
 
         switch (message.type) {
@@ -569,9 +634,51 @@ export class ClaudeAcpAgent implements Agent {
               case "hook_progress":
               case "hook_response":
               case "files_persisted":
-              case "task_started":
-              case "task_notification":
-              case "task_progress":
+                break;
+              case "task_started": {
+                // Cast needed: SDKSystemMessage only covers subtype:'init' in the SDK types,
+                // but task messages are part of the runtime SDKMessage union.
+                const taskStarted = message as unknown as SDKTaskStartedMessage;
+                await this.client.sessionUpdate({
+                  sessionId: params.sessionId,
+                  update: {
+                    sessionUpdate: "agent_message_chunk",
+                    content: {
+                      type: "text",
+                      text: `Task started: ${taskStarted.description}`,
+                    },
+                  },
+                });
+                break;
+              }
+              case "task_progress": {
+                const taskProgress = message as unknown as SDKTaskProgressMessage;
+                await this.client.sessionUpdate({
+                  sessionId: params.sessionId,
+                  update: {
+                    sessionUpdate: "agent_message_chunk",
+                    content: {
+                      type: "text",
+                      text: `Task progress: ${taskProgress.description}`,
+                    },
+                  },
+                });
+                break;
+              }
+              case "task_notification": {
+                const taskNotification = message as unknown as SDKTaskNotificationMessage;
+                await this.client.sessionUpdate({
+                  sessionId: params.sessionId,
+                  update: {
+                    sessionUpdate: "agent_message_chunk",
+                    content: {
+                      type: "text",
+                      text: `Task ${taskNotification.status}: ${taskNotification.summary}`,
+                    },
+                  },
+                });
+                break;
+              }
               case "elicitation_complete":
                 // Todo: process via status api: https://docs.claude.com/en/docs/claude-code/hooks#hook-output
                 break;
@@ -631,24 +738,26 @@ export class ClaudeAcpAgent implements Agent {
                   throw RequestError.authRequired();
                 }
                 if (message.stop_reason === "max_tokens") {
-                  return { stopReason: "max_tokens", usage };
-                }
-                if (message.is_error) {
+                  promptResult = { stopReason: "max_tokens", usage };
+                } else if (message.is_error) {
                   throw RequestError.internalError(undefined, message.result);
+                } else {
+                  promptResult = { stopReason: "end_turn", usage };
                 }
-                return { stopReason: "end_turn", usage };
+                break;
               }
               case "error_during_execution":
                 if (message.stop_reason === "max_tokens") {
-                  return { stopReason: "max_tokens", usage };
-                }
-                if (message.is_error) {
+                  promptResult = { stopReason: "max_tokens", usage };
+                } else if (message.is_error) {
                   throw RequestError.internalError(
                     undefined,
                     message.errors.join(", ") || message.subtype,
                   );
+                } else {
+                  promptResult = { stopReason: "end_turn", usage };
                 }
-                return { stopReason: "end_turn", usage };
+                break;
               case "error_max_budget_usd":
               case "error_max_turns":
               case "error_max_structured_output_retries":
@@ -658,11 +767,21 @@ export class ClaudeAcpAgent implements Agent {
                     message.errors.join(", ") || message.subtype,
                   );
                 }
-                return { stopReason: "max_turn_requests", usage };
+                promptResult = { stopReason: "max_turn_requests", usage };
+                break;
               default:
                 unreachable(message, this.logger);
                 break;
             }
+            if (promptResult && !hasTeamActivity) {
+              return promptResult;
+            }
+            if (promptResult && hasTeamActivity) {
+              resultCount++;
+              teamActivityInCurrentTurn = false;
+            }
+            // With team activity, continue the loop to process follow-up
+            // messages from the CLI's team monitoring (inbox polling).
             break;
           }
           case "stream_event": {
@@ -684,6 +803,21 @@ export class ClaudeAcpAgent implements Agent {
               break;
             }
 
+            // Detect agent team activity from tool_use blocks
+            if (message.type === "assistant" && Array.isArray(message.message.content)) {
+              for (const block of message.message.content) {
+                if (
+                  block.type === "tool_use" &&
+                  (block.name === "TeamCreate" ||
+                    block.name === "TeamDelete" ||
+                    block.name === "SendMessage")
+                ) {
+                  hasTeamActivity = true;
+                  teamActivityInCurrentTurn = true;
+                }
+              }
+            }
+
             // Check for queued prompt replay
             if (message.type === "user" && "uuid" in message && message.uuid) {
               const pending = session.pendingMessages.get(message.uuid as string);
@@ -693,7 +827,7 @@ export class ClaudeAcpAgent implements Agent {
                 handedOff = true;
                 // the current loop stops with end_turn,
                 // the loop of the next prompt continues running
-                return { stopReason: "end_turn" };
+                return promptResult ?? { stopReason: "end_turn" };
               }
               if ("isReplay" in message && message.isReplay) {
                 // not pending or unrelated replay message
@@ -949,6 +1083,17 @@ export class ClaudeAcpAgent implements Agent {
     const messages = await getSessionMessages(sessionId);
 
     for (const message of messages) {
+      // Skip CLI-injected synthetic user messages (teammate-message, system-reminder, etc.)
+      const content = (message.message as any).content;
+      const role = (message.message as any).role;
+      if (
+        role === "user" &&
+        (typeof content === "string" ||
+          (Array.isArray(content) && content.length === 1 && content[0].type === "text"))
+      ) {
+        continue;
+      }
+
       for (const notification of toAcpNotifications(
         // @ts-expect-error - untyped in SDK but we handle all of these
         message.message.content,

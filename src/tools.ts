@@ -356,6 +356,31 @@ export function toolInfoFromToolUse(
       };
     }
 
+    case "TeamCreate":
+    case "TeamDelete":
+    case "SendMessage": {
+      const input = toolUse.input;
+      let output;
+      try {
+        output = JSON.stringify(input, null, 2);
+      } catch {
+        output = typeof input === "string" ? input : "{}";
+      }
+      return {
+        title: name,
+        kind: "other",
+        content: [
+          {
+            type: "content",
+            content: {
+              type: "text",
+              text: `\`\`\`json\n${output}\`\`\``,
+            },
+          },
+        ],
+      };
+    }
+
     case "Other": {
       const input = toolUse.input;
       let output;

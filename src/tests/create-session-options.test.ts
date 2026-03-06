@@ -181,6 +181,22 @@ describe("createSession options merging", () => {
     expect(capturedOptions?.env?.CUSTOM_VAR).toBe("custom-value");
   });
 
+  it("allows enabling agent teams via user-provided env vars", async () => {
+    await agent.newSession({
+      cwd: "/test",
+      mcpServers: [],
+      _meta: {
+        claudeCode: {
+          options: {
+            env: { CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS: "1" },
+          },
+        },
+      },
+    });
+
+    expect(capturedOptions?.env?.CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS).toBe("1");
+  });
+
   it("allows user-provided env vars to override process.env entries", async () => {
     await agent.newSession({
       cwd: "/test",
