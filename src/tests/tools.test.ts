@@ -11,7 +11,7 @@ import {
   BetaBashCodeExecutionToolResultBlockParam,
 } from "@anthropic-ai/sdk/resources/beta.mjs";
 import { toAcpNotifications, ToolUseCache, Logger } from "../acp-agent.js";
-import { toolUpdateFromToolResult, createPostToolUseHook } from "../tools.js";
+import { toolUpdateFromToolResult, createPostToolUseHook, registerHookCallback } from "../tools.js";
 
 describe("rawOutput in tool call updates", () => {
   const mockClient = {} as AgentSideConnection;
@@ -873,7 +873,7 @@ describe("Bash terminal output", () => {
       const hook = createPostToolUseHook(mockLogger);
       await hook(
         {
-          hook_event_name: "PostToolUse",
+          hook_event_name: "PostToolUse" as const,
           tool_name: "Edit",
           tool_input: {
             file_path: "/Users/test/project/file.ts",
@@ -951,7 +951,7 @@ describe("Bash terminal output", () => {
       const hook = createPostToolUseHook(mockLogger);
       await hook(
         {
-          hook_event_name: "PostToolUse",
+          hook_event_name: "PostToolUse" as const,
           tool_name: "Edit",
           tool_input: {
             file_path: "/Users/test/project/file.ts",
@@ -1031,7 +1031,7 @@ describe("Bash terminal output", () => {
       const hook = createPostToolUseHook(mockLogger);
       await hook(
         {
-          hook_event_name: "PostToolUse",
+          hook_event_name: "PostToolUse" as const,
           tool_name: "Bash",
           tool_input: { command: "echo hi" },
           tool_response: "hi",
@@ -1131,7 +1131,7 @@ describe("Bash terminal output", () => {
       const hook = createPostToolUseHook(mockLogger);
       await hook(
         {
-          hook_event_name: "PostToolUse",
+          hook_event_name: "PostToolUse" as const,
           tool_name: "Bash",
           tool_input: { command: "ls -la" },
           tool_response: "file1.txt",
@@ -1212,7 +1212,7 @@ describe("Bash terminal output", () => {
       const hook = createPostToolUseHook(mockLogger);
       await hook(
         {
-          hook_event_name: "PostToolUse",
+          hook_event_name: "PostToolUse" as const,
           tool_name: "Bash",
           tool_input: { command: "echo hi" },
           tool_response: "hi",
@@ -1232,6 +1232,171 @@ describe("Bash terminal output", () => {
       expect(hookMeta.terminal_info).toBeUndefined();
       expect(hookMeta.terminal_output).toBeUndefined();
       expect(hookMeta.terminal_exit).toBeUndefined();
+    });
+  });
+
+  describe("PostToolUse callback execution contract", () => {
+    // These tests verify the observable contract between PostToolUse
+    // hooks and registerHookCallback, regardless of implementation:
+    //
+    //   1. Callback registered THEN hook fires → callback executes
+    //   2. Hook fires THEN callback registered → callback still executes
+    //   3. No errors logged in either ordering
+    //   4. Callback receives correct toolInput and toolResponse
+    //   5. Multiple hooks with mixed ordering don't interfere
+    //
+    // A helper that builds the hook input object for a given tool call.
+    function postToolUseInput(
+      toolUseId: string,
+      toolName: string,
+      toolInput: unknown = {},
+      toolResponse: unknown = "",
+    ) {
+      return {
+        hook_event_name: "PostToolUse" as const,
+        tool_name: toolName,
+        tool_input: toolInput,
+        tool_response: toolResponse,
+        tool_use_id: toolUseId,
+        session_id: "test-session",
+        transcript_path: "/tmp/test",
+        cwd: "/tmp",
+      };
+    }
+
+    it("executes callback when registered before hook fires", async () => {
+      const received: { id: string; input: unknown; response: unknown }[] = [];
+
+      registerHookCallback("toolu_before_1", {
+        onPostToolUseHook: async (id, input, response) => {
+          received.push({ id, input, response });
+        },
+      });
+
+      const hook = createPostToolUseHook(mockLogger);
+      const result = await hook(
+        postToolUseInput("toolu_before_1", "Bash", { command: "ls" }, "file.txt"),
+        "toolu_before_1",
+        { signal: AbortSignal.abort() },
+      );
+
+      expect(result).toEqual({ continue: true });
+      expect(received).toHaveLength(1);
+      expect(received[0]).toEqual({
+        id: "toolu_before_1",
+        input: { command: "ls" },
+        response: "file.txt",
+      });
+    });
+
+    it("executes callback when registered after hook fires", async () => {
+      const received: { id: string; input: unknown; response: unknown }[] = [];
+      const hook = createPostToolUseHook(mockLogger);
+
+      // Hook fires first — no callback registered yet.
+      const hookPromise = hook(
+        postToolUseInput("toolu_after_1", "Read", { file_path: "/tmp/f" }, "contents"),
+        "toolu_after_1",
+        { signal: AbortSignal.abort() },
+      );
+
+      // Registration arrives on the next tick (simulates streaming lag).
+      await new Promise((r) => setTimeout(r, 5));
+      registerHookCallback("toolu_after_1", {
+        onPostToolUseHook: async (id, input, response) => {
+          received.push({ id, input, response });
+        },
+      });
+
+      const result = await hookPromise;
+
+      expect(result).toEqual({ continue: true });
+      expect(received).toHaveLength(1);
+      expect(received[0]).toEqual({
+        id: "toolu_after_1",
+        input: { file_path: "/tmp/f" },
+        response: "contents",
+      });
+    });
+
+    it("does not log errors regardless of registration ordering", async () => {
+      const errors: string[] = [];
+      const spyLogger: Logger = {
+        log: () => {},
+        error: (...args: any[]) => {
+          errors.push(args.map(String).join(" "));
+        },
+      };
+
+      const hook = createPostToolUseHook(spyLogger);
+
+      // Case A: register-then-fire
+      registerHookCallback("toolu_order_a", {
+        onPostToolUseHook: async () => {},
+      });
+      await hook(postToolUseInput("toolu_order_a", "Bash"), "toolu_order_a", {
+        signal: AbortSignal.abort(),
+      });
+
+      // Case B: fire-then-register
+      const hookPromise = hook(postToolUseInput("toolu_order_b", "Grep"), "toolu_order_b", {
+        signal: AbortSignal.abort(),
+      });
+      await new Promise((r) => setTimeout(r, 5));
+      registerHookCallback("toolu_order_b", {
+        onPostToolUseHook: async () => {},
+      });
+      await hookPromise;
+
+      expect(errors).toHaveLength(0);
+    });
+
+    it("keeps hooks independent when some are pre-registered and some are late", async () => {
+      const callOrder: string[] = [];
+      const hook = createPostToolUseHook(mockLogger);
+
+      // Register callback A upfront.
+      registerHookCallback("toolu_mix_a", {
+        onPostToolUseHook: async (id) => {
+          callOrder.push(id);
+        },
+      });
+
+      // Fire hook B first (no registration yet), then hook A.
+      const hookBPromise = hook(postToolUseInput("toolu_mix_b", "Read"), "toolu_mix_b", {
+        signal: AbortSignal.abort(),
+      });
+
+      await hook(postToolUseInput("toolu_mix_a", "Bash"), "toolu_mix_a", {
+        signal: AbortSignal.abort(),
+      });
+
+      // A should have executed already.
+      expect(callOrder).toEqual(["toolu_mix_a"]);
+
+      // Now register B — its hook should complete.
+      registerHookCallback("toolu_mix_b", {
+        onPostToolUseHook: async (id) => {
+          callOrder.push(id);
+        },
+      });
+
+      await hookBPromise;
+      expect(callOrder).toEqual(["toolu_mix_a", "toolu_mix_b"]);
+    });
+
+    it("always returns { continue: true } even in the race case", async () => {
+      const hook = createPostToolUseHook(mockLogger);
+
+      const hookPromise = hook(postToolUseInput("toolu_continue_1", "Agent"), "toolu_continue_1", {
+        signal: AbortSignal.abort(),
+      });
+
+      registerHookCallback("toolu_continue_1", {
+        onPostToolUseHook: async () => {},
+      });
+
+      expect(await hookPromise).toEqual({ continue: true });
     });
   });
 });
