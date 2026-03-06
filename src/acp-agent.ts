@@ -496,17 +496,23 @@ export class ClaudeAcpAgent implements Agent {
 
     const userMessage = promptToClaude(params);
 
+    const promptUuid = randomUUID();
+    userMessage.uuid = promptUuid;
+
+    let promptReplayed = false;
+
     if (session.promptRunning) {
-      const uuid = randomUUID();
-      userMessage.uuid = uuid;
       session.input.push(userMessage);
       const order = session.nextPendingOrder++;
       const cancelled = await new Promise<boolean>((resolve) => {
-        session.pendingMessages.set(uuid, { resolve, order });
+        session.pendingMessages.set(promptUuid, { resolve, order });
       });
       if (cancelled) {
         return { stopReason: "cancelled" };
       }
+      // The replay resolved the promise, mark in this loop too,
+      // so we don't treat the next result as a background task's result.
+      promptReplayed = true;
     } else {
       session.input.push(userMessage);
     }
@@ -581,10 +587,6 @@ export class ClaudeAcpAgent implements Agent {
             }
             break;
           case "result": {
-            if (session.cancelled) {
-              return { stopReason: "cancelled" };
-            }
-
             // Accumulate usage from this result
             session.accumulatedUsage.inputTokens += message.usage.input_tokens;
             session.accumulatedUsage.outputTokens += message.usage.output_tokens;
@@ -610,6 +612,18 @@ export class ClaudeAcpAgent implements Agent {
                   },
                 },
               });
+            }
+
+            if (!promptReplayed) {
+              // This result is from a background task that finished after
+              // the previous prompt loop ended. Consume it and continue
+              // waiting for our own prompt's result.
+              this.logger.log(`Session ${params.sessionId}: consuming background task result`);
+              break;
+            }
+
+            if (session.cancelled) {
+              return { stopReason: "cancelled" };
             }
 
             // Build the usage response
@@ -684,8 +698,14 @@ export class ClaudeAcpAgent implements Agent {
               break;
             }
 
-            // Check for queued prompt replay
+            // Check for prompt replay
             if (message.type === "user" && "uuid" in message && message.uuid) {
+              if (message.uuid === promptUuid) {
+                // Our own prompt was replayed back — we're now processing
+                // our prompt's response (not a background task's).
+                promptReplayed = true;
+                break;
+              }
               const pending = session.pendingMessages.get(message.uuid as string);
               if (pending) {
                 pending.resolve(false);
