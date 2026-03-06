@@ -1079,6 +1079,17 @@ export class ClaudeAcpAgent implements Agent {
     const messages = await getSessionMessages(sessionId);
 
     for (const message of messages) {
+      // Skip CLI-injected synthetic user messages (teammate-message, system-reminder, etc.)
+      const content = (message.message as any).content;
+      const role = (message.message as any).role;
+      if (
+        role === "user" &&
+        (typeof content === "string" ||
+          (Array.isArray(content) && content.length === 1 && content[0].type === "text"))
+      ) {
+        continue;
+      }
+
       for (const notification of toAcpNotifications(
         // @ts-expect-error - untyped in SDK but we handle all of these
         message.message.content,
