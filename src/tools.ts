@@ -767,7 +767,7 @@ export const createPostToolUseHook =
           await onPostToolUseHook(toolUseID, input.tool_input, input.tool_response);
           delete toolUseCallbacks[toolUseID]; // Cleanup after execution
         } else {
-          logger.error(`No onPostToolUseHook found for tool use ID: ${toolUseID}`);
+          // Silenced: this is expected for subagent/server tools that don't register hooks
           delete toolUseCallbacks[toolUseID];
         }
       }
