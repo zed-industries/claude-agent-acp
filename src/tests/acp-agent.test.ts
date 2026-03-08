@@ -20,6 +20,7 @@ import { nodeToWebWritable, nodeToWebReadable } from "../utils.js";
 import {
   markdownEscape,
   toolInfoFromToolUse,
+  toDisplayPath,
   toolUpdateFromToolResult,
   toolUpdateFromEditToolResponse,
 } from "../tools.js";
@@ -563,6 +564,20 @@ describe("tool conversions", () => {
     });
   });
 
+  it("should use relative path in title when cwd is provided", () => {
+    const tool_use = {
+      type: "tool_use",
+      id: "toolu_01READ_CWD",
+      name: "Read",
+      input: { file_path: "/Users/test/project/src/main.ts" },
+    };
+
+    const result = toolInfoFromToolUse(tool_use, false, "/Users/test/project");
+    expect(result.title).toBe("Read src/main.ts");
+    // locations.path stays absolute for navigation
+    expect(result.locations).toStrictEqual([{ path: "/Users/test/project/src/main.ts", line: 1 }]);
+  });
+
   it("should handle plan entries", () => {
     const received: SDKAssistantMessage = {
       type: "assistant",
@@ -969,6 +984,22 @@ describe("tool conversions", () => {
   });
 });
 
+describe("toDisplayPath", () => {
+  it("should relativize paths inside cwd and keep absolute paths outside", () => {
+    expect(toDisplayPath("/Users/test/project/src/main.ts", "/Users/test/project")).toBe(
+      "src/main.ts",
+    );
+    expect(toDisplayPath("/etc/hosts", "/Users/test/project")).toBe("/etc/hosts");
+    expect(toDisplayPath("/Users/test/project/src/main.ts")).toBe(
+      "/Users/test/project/src/main.ts",
+    );
+    // Partial directory name match should not be treated as inside cwd
+    expect(toDisplayPath("/Users/test/project-other/file.ts", "/Users/test/project")).toBe(
+      "/Users/test/project-other/file.ts",
+    );
+  });
+});
+
 describe("toolUpdateFromEditToolResponse", () => {
   it("should return empty for non-object input", () => {
     expect(toolUpdateFromEditToolResponse(null)).toEqual({});
@@ -1279,6 +1310,7 @@ describe("stop reason propagation", () => {
       query: gen as any,
       input: new Pushable(),
       cancelled: false,
+      cwd: "/test",
       permissionMode: "default",
       settingsManager: {} as any,
       accumulatedUsage: {

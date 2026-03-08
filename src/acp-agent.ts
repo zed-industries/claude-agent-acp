@@ -110,6 +110,7 @@ type Session = {
   query: Query;
   input: Pushable<SDKUserMessage>;
   cancelled: boolean;
+  cwd: string;
   permissionMode: PermissionMode;
   settingsManager: SettingsManager;
   accumulatedUsage: AccumulatedUsage;
@@ -672,7 +673,10 @@ export class ClaudeAcpAgent implements Agent {
               this.toolUseCache,
               this.client,
               this.logger,
-              { clientCapabilities: this.clientCapabilities },
+              {
+                clientCapabilities: this.clientCapabilities,
+                cwd: session.cwd,
+              },
             )) {
               await this.client.sessionUpdate(notification);
             }
@@ -784,6 +788,7 @@ export class ClaudeAcpAgent implements Agent {
               {
                 clientCapabilities: this.clientCapabilities,
                 parentToolUseId: message.parent_tool_use_id,
+                cwd: session.cwd,
               },
             )) {
               await this.client.sessionUpdate(notification);
@@ -958,7 +963,11 @@ export class ClaudeAcpAgent implements Agent {
         toolUseCache,
         this.client,
         this.logger,
-        { registerHooks: false, clientCapabilities: this.clientCapabilities },
+        {
+          registerHooks: false,
+          clientCapabilities: this.clientCapabilities,
+          cwd: this.sessions[sessionId]?.cwd,
+        },
       )) {
         await this.client.sessionUpdate(notification);
       }
@@ -1005,6 +1014,7 @@ export class ClaudeAcpAgent implements Agent {
             ...toolInfoFromToolUse(
               { name: toolName, input: toolInput, id: toolUseID },
               supportsTerminalOutput,
+              session?.cwd,
             ),
           },
         });
@@ -1069,6 +1079,7 @@ export class ClaudeAcpAgent implements Agent {
           ...toolInfoFromToolUse(
             { name: toolName, input: toolInput, id: toolUseID },
             supportsTerminalOutput,
+            session?.cwd,
           ),
         },
       });
@@ -1382,6 +1393,7 @@ export class ClaudeAcpAgent implements Agent {
       query: q,
       input: input,
       cancelled: false,
+      cwd: params.cwd,
       permissionMode,
       settingsManager,
       accumulatedUsage: {
@@ -1697,6 +1709,7 @@ export function toAcpNotifications(
     registerHooks?: boolean;
     clientCapabilities?: ClientCapabilities;
     parentToolUseId?: string | null;
+    cwd?: string;
   },
 ): SessionNotification[] {
   const registerHooks = options?.registerHooks !== false;
@@ -1825,7 +1838,7 @@ export function toAcpNotifications(
               toolCallId: chunk.id,
               sessionUpdate: "tool_call_update",
               rawInput,
-              ...toolInfoFromToolUse(chunk, supportsTerminalOutput),
+              ...toolInfoFromToolUse(chunk, supportsTerminalOutput, options?.cwd),
             };
           } else {
             // First encounter (streaming content_block_start or replay) —
@@ -1843,7 +1856,7 @@ export function toAcpNotifications(
               sessionUpdate: "tool_call",
               rawInput,
               status: "pending",
-              ...toolInfoFromToolUse(chunk, supportsTerminalOutput),
+              ...toolInfoFromToolUse(chunk, supportsTerminalOutput, options?.cwd),
             };
           }
         }
@@ -1949,7 +1962,10 @@ export function streamEventToAcpNotifications(
   toolUseCache: ToolUseCache,
   client: AgentSideConnection,
   logger: Logger,
-  options?: { clientCapabilities?: ClientCapabilities },
+  options?: {
+    clientCapabilities?: ClientCapabilities;
+    cwd?: string;
+  },
 ): SessionNotification[] {
   const event = message.event;
   switch (event.type) {
@@ -1964,6 +1980,7 @@ export function streamEventToAcpNotifications(
         {
           clientCapabilities: options?.clientCapabilities,
           parentToolUseId: message.parent_tool_use_id,
+          cwd: options?.cwd,
         },
       );
     case "content_block_delta":
@@ -1977,6 +1994,7 @@ export function streamEventToAcpNotifications(
         {
           clientCapabilities: options?.clientCapabilities,
           parentToolUseId: message.parent_tool_use_id,
+          cwd: options?.cwd,
         },
       );
     // No content
