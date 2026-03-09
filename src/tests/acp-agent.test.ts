@@ -1516,6 +1516,7 @@ describe("stop reason propagation", () => {
 
     agent.sessions["test-session"] = {
       query: messageGenerator() as any,
+      cwd: "/tmp/test",
       input,
       cancelled: false,
       permissionMode: "default",
