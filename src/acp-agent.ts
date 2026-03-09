@@ -544,6 +544,7 @@ export class ClaudeAcpAgent implements Agent {
                     content: { type: "text", text: "\n\nCompacting completed." },
                   },
                 });
+                promptReplayed = true;
                 break;
               }
               case "local_command_output": {
@@ -554,6 +555,7 @@ export class ClaudeAcpAgent implements Agent {
                     content: { type: "text", text: message.content },
                   },
                 });
+                promptReplayed = true;
                 break;
               }
               case "hook_started":
