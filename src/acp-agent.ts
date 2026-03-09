@@ -156,18 +156,6 @@ export type NewSessionMeta = {
 };
 
 /**
- * Extended ClientCapabilities with `auth` field.
- * TODO: Remove once `auth` is added to the ACP SDK schema.
- */
-type ClientCapabilitiesWithAuth = ClientCapabilities & {
-  auth?: {
-    _meta?: {
-      gateway?: boolean;
-    };
-  };
-};
-
-/**
  * Extra metadata for 'gateway' authentication requests.
  */
 type GatewayAuthMeta = {
@@ -219,6 +207,12 @@ export type ToolUseCache = {
 
 function isStaticBinary(): boolean {
   return process.env.CLAUDE_AGENT_ACP_IS_SINGLE_FILE_BUN !== undefined;
+}
+
+export async function claudeCliPath(): Promise<string> {
+  return isStaticBinary()
+    ? (await import("@anthropic-ai/claude-agent-sdk/embed")).default
+    : import.meta.resolve("@anthropic-ai/claude-agent-sdk").replace("sdk.mjs", "cli.js");
 }
 
 function shouldHideClaudeAuth(): boolean {
@@ -288,17 +282,9 @@ export class ClaudeAcpAgent implements Agent {
   async initialize(request: InitializeRequest): Promise<InitializeResponse> {
     this.clientCapabilities = request.clientCapabilities;
 
-    // Default authMethod
-    const authMethod: any = {
-      description: "Run `claude /login` in the terminal",
-      name: "Log in with Claude",
-      id: "claude-login",
-    };
-
     // Bypasses standard auth by routing requests through a custom Anthropic-protocol gateway.
     // Only offered when the client advertises `auth._meta.gateway` capability.
-    const clientCaps = request.clientCapabilities as ClientCapabilitiesWithAuth | undefined;
-    const supportsGatewayAuth = clientCaps?.auth?._meta?.gateway === true;
+    const supportsGatewayAuth = request.clientCapabilities?.auth?._meta?.gateway === true;
 
     const gatewayAuthMethod: AuthMethod = {
       id: "gateway",
@@ -311,25 +297,22 @@ export class ClaudeAcpAgent implements Agent {
       },
     };
 
+    const terminalAuthMethod: any = {
+      description: "Run `claude /login` in the terminal",
+      name: "Log in with Claude",
+      id: "claude-login",
+      type: "terminal",
+      args: ["--cli"],
+    };
+    const supportsTerminalAuth = request.clientCapabilities?.auth?.terminal === true;
+
     // If client supports terminal-auth capability, use that instead.
-    const supportsTerminalAuth = request.clientCapabilities?._meta?.["terminal-auth"] === true;
-    if (supportsTerminalAuth) {
-      let command: string;
-      let args: string[];
-
-      if (isStaticBinary()) {
-        command = process.execPath;
-        args = ["--cli"];
-      } else {
-        const cliPath = fileURLToPath(import.meta.resolve("@anthropic-ai/claude-agent-sdk/cli.js"));
-        command = "node";
-        args = [cliPath];
-      }
-
-      authMethod._meta = {
+    const supportsMetaTerminalAuth = request.clientCapabilities?._meta?.["terminal-auth"] === true;
+    if (supportsMetaTerminalAuth) {
+      terminalAuthMethod._meta = {
         "terminal-auth": {
-          command,
-          args,
+          command: process.execPath,
+          args: [...process.argv.slice(1), "--cli"],
           label: "Claude Login",
         },
       };
@@ -364,8 +347,9 @@ export class ClaudeAcpAgent implements Agent {
         version: packageJson.version,
       },
       authMethods: [
-        // Terminal auth can also be used for API keys, so don't gate it on --hide-claude-auth.
-        ...(shouldHideClaudeAuth() && !supportsTerminalAuth ? [] : [authMethod]),
+        ...(!shouldHideClaudeAuth() && (supportsTerminalAuth || supportsMetaTerminalAuth)
+          ? [terminalAuthMethod]
+          : []),
         ...(supportsGatewayAuth ? [gatewayAuthMethod] : []),
       ],
     };
@@ -1278,8 +1262,7 @@ export class ClaudeAcpAgent implements Agent {
       canUseTool: this.canUseTool(sessionId),
       // note: although not documented by the types, passing an absolute path
       // here works to find zed's managed node version.
-      executable: process.execPath as any,
-      executableArgs: isStaticBinary() ? ["--cli"] : undefined,
+      executable: isStaticBinary() ? undefined : (process.execPath as any),
       ...(process.env.CLAUDE_CODE_EXECUTABLE
         ? { pathToClaudeCodeExecutable: process.env.CLAUDE_CODE_EXECUTABLE }
         : isStaticBinary()
