@@ -58,7 +58,7 @@ describe("authorization", () => {
     const initializeResponse = await agent.initialize({
       protocolVersion: 1,
       clientCapabilities: {
-        auth: { _meta: { gateway: true } },
+        _meta: { gateway: true },
       } as any,
     });
     expect(initializeResponse.authMethods).toContainEqual(
@@ -72,7 +72,7 @@ describe("authorization", () => {
     const initializeResponse = await agent.initialize({
       protocolVersion: 1,
       clientCapabilities: {
-        auth: { _meta: { gateway: true } },
+        _meta: { gateway: true },
       } as any,
     });
     expect(initializeResponse.authMethods).toContainEqual(
@@ -119,7 +119,7 @@ describe("authorization", () => {
     const initializeResponse = await agent.initialize({
       protocolVersion: 1,
       clientCapabilities: {
-        auth: { _meta: { gateway: true } },
+        _meta: { gateway: true },
       } as any,
     });
     expect(initializeResponse.authMethods).not.toContainEqual(
