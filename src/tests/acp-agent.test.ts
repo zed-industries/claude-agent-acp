@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import { spawn, spawnSync } from "child_process";
 import {
   Agent,
@@ -1325,17 +1325,12 @@ describe("stop reason propagation", () => {
       cwd: "/test",
       permissionMode: "default",
       settingsManager: {} as any,
-      accumulatedUsage: {
-        inputTokens: 0,
-        outputTokens: 0,
-        cachedReadTokens: 0,
-        cachedWriteTokens: 0,
-      },
       configOptions: [],
-      promptRunning: false,
-      pendingMessages: new Map(),
-      nextPendingOrder: 0,
+      activePrompt: null,
+      promptQueue: [],
     };
+    // Start the background message processing loop
+    (agent as any).processSessionMessages("test-session");
   }
 
   it("should return max_tokens when success result has stop_reason max_tokens", async () => {
@@ -1451,17 +1446,12 @@ describe("stop reason propagation", () => {
       cancelled: false,
       permissionMode: "default",
       settingsManager: {} as any,
-      accumulatedUsage: {
-        inputTokens: 0,
-        outputTokens: 0,
-        cachedReadTokens: 0,
-        cachedWriteTokens: 0,
-      },
       configOptions: [],
-      promptRunning: false,
-      pendingMessages: new Map(),
-      nextPendingOrder: 0,
+      activePrompt: null,
+      promptQueue: [],
     };
+    // Start the background message processing loop
+    (agent as any).processSessionMessages("test-session");
 
     const response = await agent.prompt({
       sessionId: "test-session",
@@ -1469,13 +1459,89 @@ describe("stop reason propagation", () => {
     });
 
     expect(response.stopReason).toBe("end_turn");
-    // Usage should include both background task and prompt result tokens
-    expect(response.usage?.inputTokens).toBe(
-      backgroundTaskResult.usage.input_tokens + promptResult.usage.input_tokens,
+    // Usage reflects only the prompt's own result, not background tasks
+    expect(response.usage?.inputTokens).toBe(promptResult.usage.input_tokens);
+    expect(response.usage?.outputTokens).toBe(promptResult.usage.output_tokens);
+  });
+
+  it("should send sessionUpdate notifications for background task stream events", async () => {
+    const sessionUpdateFn = vi.fn().mockResolvedValue(undefined);
+    const mockClient = {
+      sessionUpdate: sessionUpdateFn,
+    } as unknown as AgentSideConnection;
+    const agent = new ClaudeAcpAgent(mockClient, { log: () => {}, error: () => {} });
+    const input = new Pushable<any>();
+
+    const promptResult = createResultMessage({
+      subtype: "success",
+      stop_reason: null,
+      is_error: false,
+    });
+
+    const backgroundTaskResult = createResultMessage({
+      subtype: "success",
+      stop_reason: null,
+      is_error: false,
+    });
+
+    async function* messageGenerator() {
+      // Background task stream event + result arrive before our prompt's replay
+      yield {
+        type: "stream_event",
+        session_id: "test-session",
+        parent_tool_use_id: null,
+        event: {
+          type: "content_block_start",
+          index: 0,
+          content_block: { type: "text", text: "background work" },
+        },
+      };
+      yield backgroundTaskResult;
+
+      // Now the prompt's user message replay arrives
+      const iter = input[Symbol.asyncIterator]();
+      const { value: userMessage } = await iter.next();
+      yield {
+        type: "user",
+        message: userMessage.message,
+        parent_tool_use_id: null,
+        uuid: userMessage.uuid,
+        session_id: "test-session",
+        isReplay: true,
+      };
+
+      // Then the prompt's own result
+      yield promptResult;
+    }
+
+    agent.sessions["test-session"] = {
+      query: messageGenerator() as any,
+      cwd: "/tmp/test",
+      input,
+      cancelled: false,
+      permissionMode: "default",
+      settingsManager: {} as any,
+      configOptions: [],
+      activePrompt: null,
+      promptQueue: [],
+    };
+    (agent as any).processSessionMessages("test-session");
+
+    const response = await agent.prompt({
+      sessionId: "test-session",
+      prompt: [{ type: "text", text: "test" }],
+    });
+
+    expect(response.stopReason).toBe("end_turn");
+    // sessionUpdate should have been called for the background stream event
+    const streamCalls = sessionUpdateFn.mock.calls.filter(
+      (call: any) => call[0]?.update?.sessionUpdate === "agent_message_chunk",
     );
-    expect(response.usage?.outputTokens).toBe(
-      backgroundTaskResult.usage.output_tokens + promptResult.usage.output_tokens,
+    expect(streamCalls.length).toBeGreaterThan(0);
+    const hasBackgroundWork = streamCalls.some((call: any) =>
+      call[0]?.update?.content?.text?.includes("background work"),
     );
+    expect(hasBackgroundWork).toBe(true);
   });
 
   it("should throw internal error for success with is_error true and no max_tokens", async () => {
