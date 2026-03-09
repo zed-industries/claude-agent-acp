@@ -1222,11 +1222,9 @@ export class ClaudeAcpAgent implements Agent {
     // Explicit tools array from _meta.claudeCode.options takes precedence.
     // disableBuiltInTools is a legacy shorthand for tools: [] — kept for
     // backward compatibility but callers should prefer the tools array.
-    const resolvedTools: Options["tools"] =
+    const tools: Options["tools"] =
       userProvidedOptions?.tools ??
-      (params._meta?.disableBuiltInTools === true
-        ? []
-        : { type: "preset", preset: "claude_code" });
+      (params._meta?.disableBuiltInTools === true ? [] : { type: "preset", preset: "claude_code" });
 
     const options: Options = {
       systemPrompt,
@@ -1261,7 +1259,7 @@ export class ClaudeAcpAgent implements Agent {
         "replay-user-messages": "",
       },
       disallowedTools: [...(userProvidedOptions?.disallowedTools || []), ...disallowedTools],
-      tools: resolvedTools,
+      tools,
       hooks: {
         ...userProvidedOptions?.hooks,
         PostToolUse: [
