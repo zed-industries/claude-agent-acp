@@ -224,6 +224,61 @@ describe("session config options", () => {
       expect(configUpdate).toBeUndefined();
     });
 
+    it("resolves model alias 'opus' to full model ID", async () => {
+      const response = await agent.setSessionConfigOption({
+        sessionId: SESSION_ID,
+        configId: "model",
+        value: "opus",
+      });
+
+      expect(setModelSpy).toHaveBeenCalledWith("claude-opus-4-5");
+
+      const modelOption = response.configOptions.find((o) => o.id === "model");
+      expect(modelOption?.currentValue).toBe("claude-opus-4-5");
+    });
+
+    it("resolves model alias 'sonnet' to full model ID", async () => {
+      await agent.setSessionConfigOption({
+        sessionId: SESSION_ID,
+        configId: "model",
+        value: "sonnet",
+      });
+
+      expect(setModelSpy).toHaveBeenCalledWith("claude-sonnet-4-5");
+    });
+
+    it("resolves display name to model ID", async () => {
+      await agent.setSessionConfigOption({
+        sessionId: SESSION_ID,
+        configId: "model",
+        value: "Claude Sonnet",
+      });
+
+      expect(setModelSpy).toHaveBeenCalledWith("claude-sonnet-4-5");
+    });
+
+    it("still works with exact model ID", async () => {
+      const response = await agent.setSessionConfigOption({
+        sessionId: SESSION_ID,
+        configId: "model",
+        value: "claude-sonnet-4-5",
+      });
+
+      expect(setModelSpy).toHaveBeenCalledWith("claude-sonnet-4-5");
+      const modelOption = response.configOptions.find((o) => o.id === "model");
+      expect(modelOption?.currentValue).toBe("claude-sonnet-4-5");
+    });
+
+    it("throws for completely invalid model value", async () => {
+      await expect(
+        agent.setSessionConfigOption({
+          sessionId: SESSION_ID,
+          configId: "model",
+          value: "gpt-4",
+        }),
+      ).rejects.toThrow("Invalid value for config option model: gpt-4");
+    });
+
     it("returns full configOptions in the response", async () => {
       const response = await agent.setSessionConfigOption({
         sessionId: SESSION_ID,

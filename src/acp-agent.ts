@@ -923,27 +923,47 @@ export class ClaudeAcpAgent implements Agent {
       "options" in option && Array.isArray(option.options)
         ? option.options.flatMap((o) => ("options" in o ? o.options : [o]))
         : [];
-    const validValue = allValues.find((o) => o.value === params.value);
+    let validValue = allValues.find((o) => o.value === params.value);
+
+    // For model options, fall back to resolveModelPreference when the exact
+    // value doesn't match.  This lets callers use human-friendly aliases like
+    // "opus" or "sonnet" instead of full model IDs like "claude-opus-4-6".
+    if (!validValue && params.configId === "model") {
+      const modelInfos: ModelInfo[] = allValues.map((o) => ({
+        value: o.value,
+        displayName: o.name,
+        description: o.description ?? "",
+      }));
+      const resolved = resolveModelPreference(modelInfos, params.value);
+      if (resolved) {
+        validValue = allValues.find((o) => o.value === resolved.value);
+      }
+    }
+
     if (!validValue) {
       throw new Error(`Invalid value for config option ${params.configId}: ${params.value}`);
     }
 
+    // Use the canonical option value so downstream code always receives the
+    // model ID rather than the caller-supplied alias.
+    const resolvedValue = validValue.value;
+
     if (params.configId === "mode") {
-      await this.applySessionMode(params.sessionId, params.value);
+      await this.applySessionMode(params.sessionId, resolvedValue);
       await this.client.sessionUpdate({
         sessionId: params.sessionId,
         update: {
           sessionUpdate: "current_mode_update",
-          currentModeId: params.value,
+          currentModeId: resolvedValue,
         },
       });
     } else if (params.configId === "model") {
-      await this.sessions[params.sessionId].query.setModel(params.value);
+      await this.sessions[params.sessionId].query.setModel(resolvedValue);
     }
 
     session.configOptions = session.configOptions.map((o) =>
       o.id === params.configId && typeof o.currentValue === "string"
-        ? { ...o, currentValue: params.value }
+        ? { ...o, currentValue: resolvedValue }
         : o,
     );
 
