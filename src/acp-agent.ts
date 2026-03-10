@@ -58,6 +58,7 @@ import { ContentBlockParam } from "@anthropic-ai/sdk/resources";
 import { BetaContentBlock, BetaRawContentBlockDelta } from "@anthropic-ai/sdk/resources/beta.mjs";
 import { randomUUID } from "node:crypto";
 import * as fs from "node:fs";
+import { mkdir, mkdtemp, rm, stat, symlink } from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -91,6 +92,73 @@ function sanitizeTitle(text: string): string {
   return sanitized.slice(0, MAX_TITLE_LENGTH - 1) + "…";
 }
 
+function readAdditionalRoots(
+  meta: NewSessionMeta | undefined,
+  sessionCwd: string,
+): string[] | undefined {
+  if (!Array.isArray(meta?.additionalRoots)) {
+    return undefined;
+  }
+
+  const additionalRoots = Array.from(
+    new Set(
+      meta.additionalRoots
+        .filter((value): value is string => typeof value === "string")
+        .map((value) => value.trim())
+        .filter((value) => value.length > 0)
+        .map((value) => (path.isAbsolute(value) ? value : path.resolve(sessionCwd, value))),
+    ),
+  );
+
+  return additionalRoots.length > 0 ? additionalRoots : undefined;
+}
+
+async function prepareAdditionalRoots(
+  sessionId: string,
+  additionalRoots: ReadonlyArray<string> | undefined,
+): Promise<{ directories?: string[]; wrapperDirs: string[] }> {
+  if (!additionalRoots?.length) {
+    return { directories: undefined, wrapperDirs: [] };
+  }
+
+  const isDirectory = (filePath: string) =>
+    stat(filePath).then((fileStat) => fileStat.isDirectory(), () => false);
+  const directories: string[] = [];
+  const wrapperDirs: string[] = [];
+
+  const wrapperParentDir = path.join(os.tmpdir(), "claude-agent-acp-skills");
+  await mkdir(wrapperParentDir, { recursive: true });
+
+  try {
+    for (const root of additionalRoots) {
+      directories.push(root);
+
+      const nestedSkillsDir = path.join(root, "skills");
+      if (!(await isDirectory(nestedSkillsDir))) {
+        continue;
+      }
+
+      const wrapperRoot = await mkdtemp(path.join(wrapperParentDir, `${sessionId.slice(0, 12)}-`));
+      wrapperDirs.push(wrapperRoot);
+
+      const wrapperLinkPath = path.join(wrapperRoot, ".claude", "skills");
+      await mkdir(path.dirname(wrapperLinkPath), { recursive: true });
+      await symlink(
+        nestedSkillsDir,
+        wrapperLinkPath,
+        process.platform === "win32" ? "junction" : "dir",
+      );
+
+      directories.push(wrapperRoot);
+    }
+  } catch (error) {
+    await Promise.all(wrapperDirs.map((directory) => rm(directory, { recursive: true, force: true })));
+    throw error;
+  }
+
+  return { directories, wrapperDirs };
+}
+
 /**
  * Logger interface for customizing logging output
  */
@@ -118,6 +186,7 @@ type Session = {
   promptRunning: boolean;
   pendingMessages: Map<string, { resolve: (cancelled: boolean) => void; order: number }>;
   nextPendingOrder: number;
+  additionalRootWrapperDirs?: string[];
 };
 
 type BackgroundTerminal =
@@ -153,6 +222,7 @@ export type NewSessionMeta = {
      */
     options?: Options;
   };
+  additionalRoots?: unknown[];
 };
 
 /**
@@ -843,6 +913,18 @@ export class ClaudeAcpAgent implements Agent {
         this.logger.error(`Session ${params.sessionId}: Claude Agent process died: ${message}`);
         session.input.end();
         delete this.sessions[params.sessionId];
+        await Promise.all(
+          (session.additionalRootWrapperDirs ?? []).map(async (directory) => {
+            try {
+              await rm(directory, { recursive: true, force: true });
+            } catch (cleanupError) {
+              this.logger.error(
+                `Failed to remove additionalRoots wrapper ${directory}:`,
+                cleanupError,
+              );
+            }
+          }),
+        );
         throw RequestError.internalError(
           undefined,
           "The Claude Agent process exited unexpectedly. Please start a new session.",
@@ -1239,7 +1321,33 @@ export class ClaudeAcpAgent implements Agent {
     );
 
     // Extract options from _meta if provided
-    const userProvidedOptions = (params._meta as NewSessionMeta | undefined)?.claudeCode?.options;
+    const sessionMeta = params._meta as NewSessionMeta | undefined;
+    const userProvidedOptions = sessionMeta?.claudeCode?.options;
+    const additionalRoots = await prepareAdditionalRoots(
+      sessionId,
+      readAdditionalRoots(sessionMeta, params.cwd)
+    );
+    const additionalDirectories =
+      userProvidedOptions?.additionalDirectories || additionalRoots.directories
+        ? Array.from(
+            new Set(
+              [
+                ...(userProvidedOptions?.additionalDirectories ?? []),
+                ...(additionalRoots.directories ?? []),
+              ]
+                .map((value) => value.trim())
+                .filter((value) => value.length > 0),
+            ),
+          )
+        : undefined;
+
+    const cleanupPreparedAdditionalRoots = () =>
+      Promise.all(
+        additionalRoots.wrapperDirs.map((directory) =>
+          rm(directory, { recursive: true, force: true }),
+        ),
+      );
+    const replacedWrapperDirs = this.sessions[sessionId]?.additionalRootWrapperDirs ?? [];
 
     // Configure thinking tokens from environment variable
     const maxThinkingTokens = process.env.MAX_THINKING_TOKENS
@@ -1320,6 +1428,10 @@ export class ClaudeAcpAgent implements Agent {
       ...creationOpts,
     };
 
+    if (additionalDirectories) {
+      options.additionalDirectories = additionalDirectories;
+    }
+
     if (creationOpts?.resume === undefined || creationOpts?.forkSession) {
       // Set our own session id if not resuming an existing session.
       options.sessionId = sessionId;
@@ -1328,6 +1440,7 @@ export class ClaudeAcpAgent implements Agent {
     // Handle abort controller from meta options
     const abortController = userProvidedOptions?.abortController;
     if (abortController?.signal.aborted) {
+      await cleanupPreparedAdditionalRoots();
       throw new Error("Cancelled");
     }
 
@@ -1340,6 +1453,7 @@ export class ClaudeAcpAgent implements Agent {
     try {
       initializationResult = await q.initializationResult();
     } catch (error) {
+      await cleanupPreparedAdditionalRoots();
       if (
         creationOpts.resume &&
         error instanceof Error &&
@@ -1351,13 +1465,27 @@ export class ClaudeAcpAgent implements Agent {
     }
 
     if (shouldHideClaudeAuth() && initializationResult.account.subscriptionType) {
+      await cleanupPreparedAdditionalRoots();
       throw RequestError.authRequired(
         undefined,
         "This integration does not support using claude.ai subscriptions.",
       );
     }
 
-    const models = await getAvailableModels(q, initializationResult.models, settingsManager);
+    let models;
+    try {
+      models = await getAvailableModels(q, initializationResult.models, settingsManager);
+    } catch (error) {
+      await cleanupPreparedAdditionalRoots();
+      if (
+        creationOpts.resume &&
+        error instanceof Error &&
+        error.message === "Query closed before response received"
+      ) {
+        throw RequestError.resourceNotFound(sessionId);
+      }
+      throw error;
+    }
 
     const availableModes = [
       {
@@ -1414,7 +1542,17 @@ export class ClaudeAcpAgent implements Agent {
       promptRunning: false,
       pendingMessages: new Map(),
       nextPendingOrder: 0,
+      additionalRootWrapperDirs: additionalRoots.wrapperDirs,
     };
+    await Promise.all(
+      replacedWrapperDirs.map(async (directory) => {
+        try {
+          await rm(directory, { recursive: true, force: true });
+        } catch (error) {
+          this.logger.error(`Failed to remove replaced additionalRoots wrapper ${directory}:`, error);
+        }
+      }),
+    );
 
     return {
       sessionId,
