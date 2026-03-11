@@ -1328,6 +1328,7 @@ describe("stop reason propagation", () => {
       promptRunning: false,
       pendingMessages: new Map(),
       nextPendingOrder: 0,
+      abortController: new AbortController(),
     };
   }
 
@@ -1414,5 +1415,82 @@ describe("stop reason propagation", () => {
         prompt: [{ type: "text", text: "test" }],
       }),
     ).rejects.toThrow("Internal error");
+  });
+});
+
+describe("session/close", () => {
+  function createMockAgent() {
+    const mockClient = {
+      sessionUpdate: async () => {},
+    } as unknown as AgentSideConnection;
+    return new ClaudeAcpAgent(mockClient, { log: () => {}, error: () => {} });
+  }
+
+  function injectSession(agent: ClaudeAcpAgent, sessionId: string) {
+    function* empty() {}
+    const gen = Object.assign(empty(), { interrupt: vi.fn() });
+    agent.sessions[sessionId] = {
+      query: gen as any,
+      input: new Pushable(),
+      cancelled: false,
+      cwd: "/test",
+      permissionMode: "default",
+      settingsManager: {} as any,
+      accumulatedUsage: {
+        inputTokens: 0,
+        outputTokens: 0,
+        cachedReadTokens: 0,
+        cachedWriteTokens: 0,
+      },
+      configOptions: [],
+      promptRunning: false,
+      pendingMessages: new Map(),
+      nextPendingOrder: 0,
+      abortController: new AbortController(),
+    };
+    return agent.sessions[sessionId]!;
+  }
+
+  it("should close an existing session and remove it", async () => {
+    const agent = createMockAgent();
+    const session = injectSession(agent, "session-1");
+
+    expect(agent.sessions["session-1"]).toBeDefined();
+
+    const result = await agent.unstable_sessionClose({ sessionId: "session-1" });
+
+    expect(result).toEqual({});
+    expect(agent.sessions["session-1"]).toBeUndefined();
+    expect(session.query.interrupt).toHaveBeenCalled();
+  });
+
+  it("should abort the session's abort controller", async () => {
+    const agent = createMockAgent();
+    const session = injectSession(agent, "session-2");
+
+    expect(session.abortController.signal.aborted).toBe(false);
+
+    await agent.unstable_sessionClose({ sessionId: "session-2" });
+
+    expect(session.abortController.signal.aborted).toBe(true);
+  });
+
+  it("should throw when closing a non-existent session", async () => {
+    const agent = createMockAgent();
+
+    await expect(agent.unstable_sessionClose({ sessionId: "non-existent" })).rejects.toThrow(
+      "Session not found",
+    );
+  });
+
+  it("should not affect other sessions when closing one", async () => {
+    const agent = createMockAgent();
+    injectSession(agent, "session-a");
+    injectSession(agent, "session-b");
+
+    await agent.unstable_sessionClose({ sessionId: "session-a" });
+
+    expect(agent.sessions["session-a"]).toBeUndefined();
+    expect(agent.sessions["session-b"]).toBeDefined();
   });
 });
