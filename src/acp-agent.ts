@@ -1242,27 +1242,10 @@ export class ClaudeAcpAgent implements Agent {
     // Extract options from _meta if provided
     const sessionMeta = params._meta as NewSessionMeta | undefined;
     const userProvidedOptions = sessionMeta?.claudeCode?.options;
-    const mergedAdditionalDirectories = [
-      ...(userProvidedOptions?.additionalDirectories ?? []),
-      ...(!Array.isArray(sessionMeta?.additionalRoots)
-        ? []
-        : Array.from(
-            new Set(
-              sessionMeta.additionalRoots
-                .filter((value): value is string => typeof value === "string")
-                .map((value) => value.trim())
-                .filter((value) => value.length > 0)
-                .map((value) =>
-                  path.isAbsolute(value) ? value : path.resolve(params.cwd, value),
-                ),
-            ),
-          )),
-    ]
-      .map((value) => value.trim())
-      .filter((value) => value.length > 0);
-    const additionalDirectories = mergedAdditionalDirectories.length
-      ? Array.from(new Set(mergedAdditionalDirectories))
-      : undefined;
+    const additionalRoots = !Array.isArray(sessionMeta?.additionalRoots)
+      ? []
+      : sessionMeta.additionalRoots
+          .filter((value): value is string => typeof value === "string");
 
     // Configure thinking tokens from environment variable
     const maxThinkingTokens = process.env.MAX_THINKING_TOKENS
@@ -1343,8 +1326,12 @@ export class ClaudeAcpAgent implements Agent {
       ...creationOpts,
     };
 
-    if (additionalDirectories) {
-      options.additionalDirectories = additionalDirectories;
+    const additionalDirectories = [
+      ...(userProvidedOptions?.additionalDirectories ?? []),
+      ...additionalRoots,
+    ];
+    if (additionalDirectories.length > 0) {
+      options.additionalDirectories = Array.from(new Set(additionalDirectories));
     }
 
     if (creationOpts?.resume === undefined || creationOpts?.forkSession) {
@@ -1384,19 +1371,7 @@ export class ClaudeAcpAgent implements Agent {
       );
     }
 
-    let models;
-    try {
-      models = await getAvailableModels(q, initializationResult.models, settingsManager);
-    } catch (error) {
-      if (
-        creationOpts.resume &&
-        error instanceof Error &&
-        error.message === "Query closed before response received"
-      ) {
-        throw RequestError.resourceNotFound(sessionId);
-      }
-      throw error;
-    }
+    const models = await getAvailableModels(q, initializationResult.models, settingsManager);
 
     const availableModes = [
       {

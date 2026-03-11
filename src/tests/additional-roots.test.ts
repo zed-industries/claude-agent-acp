@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, rm } from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 import { AgentSideConnection, SessionNotification } from "@agentclientprotocol/sdk";
@@ -51,24 +51,20 @@ describe("additionalRoots", () => {
     void (await Promise.all(tempDirs.map((dir) => rm(dir, { recursive: true, force: true }))))
   );
 
-  it("passes through relative roots that contain .agents/skills", async () => {
+  it("passes through relative roots as provided", async () => {
     const projectRoot = await mkdtemp(path.join(os.tmpdir(), "claude-project-"));
     tempDirs.push(projectRoot);
-    await mkdir(path.join(projectRoot, ".agents", "skills", "demo-skill"), { recursive: true });
-    await writeFile(path.join(projectRoot, ".agents", "skills", "demo-skill", "SKILL.md"), "# Demo");
     await newSession({ additionalRoots: ["."] }, projectRoot);
-    expect(capturedOptions!.additionalDirectories).toEqual([projectRoot]);
+    expect(capturedOptions!.additionalDirectories).toEqual(["."]);
   });
 
-  it("merges additionalRoots with user additionalDirectories", async () => {
+  it("merges additionalRoots with user additionalDirectories without normalization", async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), "claude-root-"));
     tempDirs.push(root);
-    await mkdir(path.join(root, ".agents", "skills", "demo-skill"), { recursive: true });
-    await writeFile(path.join(root, ".agents", "skills", "demo-skill", "SKILL.md"), "# Demo");
     await newSession({
       additionalRoots: ["", root, 7],
       claudeCode: { options: { additionalDirectories: ["/workspace/shared"] } },
     });
-    expect(capturedOptions!.additionalDirectories).toEqual(["/workspace/shared", root]);
+    expect(capturedOptions!.additionalDirectories).toEqual(["/workspace/shared", "", root]);
   });
 });
