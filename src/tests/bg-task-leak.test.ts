@@ -555,6 +555,230 @@ describe("Background task notification leak", () => {
       expect(result.stopReason).toBe("end_turn");
     });
 
+    it("clears pendingTaskIds when task_notification reports stopped status", async () => {
+      // Same as the failed test above but with "stopped" status —
+      // verifies all terminal statuses clear the set.
+      const normalTurn = makeNormalTurnMessages("Stopped.");
+      const resultIdx = normalTurn.findIndex((m: any) => m.type === "result");
+      normalTurn.splice(resultIdx, 0, {
+        type: "system",
+        subtype: "task_started",
+        task_id: "stop-task-1",
+        tool_use_id: "toolu_stop_1",
+        description: "Will be stopped",
+        task_type: "local_bash",
+        session_id: SESSION_ID,
+      });
+      const newResultIdx = normalTurn.findIndex((m: any) => m.type === "result");
+      normalTurn.splice(newResultIdx, 0, {
+        type: "system",
+        subtype: "task_notification",
+        task_id: "stop-task-1",
+        tool_use_id: "toolu_stop_1",
+        status: "stopped",
+        summary: "Task was cancelled",
+        session_id: SESSION_ID,
+      });
+
+      const mockQuery = createMockQuery(normalTurn);
+      const { client } = createMockClient();
+      const agent = createAgentWithSession(mockQuery, client);
+
+      const result = await agent.prompt({
+        sessionId: SESSION_ID,
+        prompt: [{ type: "text", text: "go" }],
+      });
+
+      expect(result.stopReason).toBe("end_turn");
+    });
+
+    it("error_during_execution result does NOT drain internal turns (known limitation)", async () => {
+      // The internal turn drain only runs for result/success. If the
+      // prompt errors while a bg task is pending, internal turn messages
+      // can still leak. This test documents the current behavior.
+      const messages = [
+        { type: "system", subtype: "init", session_id: SESSION_ID },
+        {
+          type: "system",
+          subtype: "task_started",
+          task_id: "err-task-1",
+          tool_use_id: "toolu_err_1",
+          description: "bg task during error",
+          task_type: "local_bash",
+          session_id: SESSION_ID,
+        },
+        {
+          type: "result",
+          subtype: "error_during_execution",
+          is_error: true,
+          stop_reason: null,
+          duration_ms: 50,
+          result: "something broke",
+          errors: ["tool execution failed"],
+          session_id: SESSION_ID,
+          total_cost_usd: 0.001,
+          usage: {
+            input_tokens: 5,
+            output_tokens: 2,
+            cache_read_input_tokens: 0,
+            cache_creation_input_tokens: 0,
+            server_tool_use: { web_search_requests: 0, web_fetch_requests: 0 },
+            service_tier: "standard",
+          },
+          modelUsage: {
+            "test-model": {
+              inputTokens: 5,
+              outputTokens: 2,
+              cacheReadInputTokens: 0,
+              cacheCreationInputTokens: 0,
+              webSearchRequests: 0,
+              costUSD: 0.001,
+              contextWindow: 200000,
+              maxOutputTokens: 4096,
+            },
+          },
+        },
+        // These would be the internal turn — left in the queue
+        ...makeBgTaskInternalTurnMessages(),
+      ];
+
+      const mockQuery = createMockQuery(messages);
+      const { client } = createMockClient();
+      const agent = createAgentWithSession(mockQuery, client);
+
+      // error_during_execution with is_error throws
+      await expect(
+        agent.prompt({
+          sessionId: SESSION_ID,
+          prompt: [{ type: "text", text: "go" }],
+        }),
+      ).rejects.toThrow("tool execution failed");
+
+      // The internal turn messages are still in the queue (known limitation).
+      // This documents the behavior rather than asserting a fix.
+      const queue = (mockQuery as any).inputStream.queue as any[];
+      expect(0 < queue.length).toBe(true);
+    });
+
+    it("multiple back-to-back bg task internal turns are all consumed", async () => {
+      // Two background tasks complete after the first result, each
+      // producing its own internal turn (task_notification → assistant → result).
+      const normalTurn = makeNormalTurnMessages("Two tasks launched.");
+      const resultIdx = normalTurn.findIndex((m: any) => m.type === "result");
+
+      // Insert two task_started messages
+      normalTurn.splice(resultIdx, 0, {
+        type: "system",
+        subtype: "task_started",
+        task_id: "bg-task-a",
+        tool_use_id: "toolu_a",
+        description: "First bg task",
+        task_type: "local_bash",
+        session_id: SESSION_ID,
+      });
+      const resultIdx2 = normalTurn.findIndex((m: any) => m.type === "result");
+      normalTurn.splice(resultIdx2, 0, {
+        type: "system",
+        subtype: "task_started",
+        task_id: "bg-task-b",
+        tool_use_id: "toolu_b",
+        description: "Second bg task",
+        task_type: "local_bash",
+        session_id: SESSION_ID,
+      });
+
+      // First internal turn (task A completes)
+      const internalTurnA = makeBgTaskInternalTurnMessages();
+      (internalTurnA[0] as any).task_id = "bg-task-a";
+
+      // Second internal turn (task B completes)
+      const bgTextB = "\n\nSecond background task also completed.";
+      const internalTurnB = [
+        {
+          type: "system",
+          subtype: "task_notification",
+          task_id: "bg-task-b",
+          tool_use_id: "toolu_b",
+          status: "completed",
+          output_file: "/tmp/tasks/bg-task-b.output",
+          summary: "Second background command completed",
+          session_id: SESSION_ID,
+        },
+        { type: "system", subtype: "init", cwd: "/test", session_id: SESSION_ID, tools: [], model: "test" },
+        {
+          type: "stream_event",
+          event: { type: "message_start", message: { model: "test", role: "assistant", content: [], id: "msg_b" } },
+          parent_tool_use_id: null,
+          session_id: SESSION_ID,
+        },
+        {
+          type: "stream_event",
+          event: { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } },
+          parent_tool_use_id: null,
+          session_id: SESSION_ID,
+        },
+        {
+          type: "stream_event",
+          event: { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: bgTextB } },
+          parent_tool_use_id: null,
+          session_id: SESSION_ID,
+        },
+        {
+          type: "assistant",
+          message: {
+            role: "assistant",
+            content: [{ type: "text", text: bgTextB }],
+            model: "test",
+            id: "msg_b",
+            type: "message",
+            stop_reason: null,
+            stop_sequence: null,
+            usage: { input_tokens: 3, output_tokens: 10, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 },
+          },
+          parent_tool_use_id: null,
+          session_id: SESSION_ID,
+        },
+        {
+          type: "stream_event",
+          event: { type: "content_block_stop", index: 0 },
+          parent_tool_use_id: null,
+          session_id: SESSION_ID,
+        },
+        {
+          type: "stream_event",
+          event: { type: "message_stop" },
+          parent_tool_use_id: null,
+          session_id: SESSION_ID,
+        },
+        makeResultMessage(bgTextB, 3, 10),
+      ];
+
+      const allMessages = [...normalTurn, ...internalTurnA, ...internalTurnB];
+      const mockQuery = createMockQuery(allMessages);
+      const { client, updates } = createMockClient();
+      const agent = createAgentWithSession(mockQuery, client);
+
+      const result = await agent.prompt({
+        sessionId: SESSION_ID,
+        prompt: [{ type: "text", text: "launch both" }],
+      });
+
+      expect(result.stopReason).toBe("end_turn");
+
+      // Both internal turns should have been consumed and forwarded
+      const allText = updates
+        .filter((u: any) => u.update?.sessionUpdate === "agent_message_chunk")
+        .map((u: any) => u.update?.content?.text ?? "")
+        .join("");
+
+      expect(allText).toContain("background task from the subagent completed");
+      expect(allText).toContain("Second background task also completed");
+
+      // Queue should be empty (all consumed)
+      const queue = (mockQuery as any).inputStream.queue as any[];
+      expect(queue.length).toBe(0);
+    });
+
     it("normal turns without bg tasks should be unaffected", async () => {
       const messages = makeNormalTurnMessages("Hello");
       const mockQuery = createMockQuery(messages);
