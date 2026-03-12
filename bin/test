@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
 # Runs the same checks as CI (.github/workflows/ci.yml).
-# Usage: bin/test
+#
+# CI runs on a clean checkout, so `npm run format:check` only sees
+# tracked files. Locally we may have untracked x.* scratch files that
+# fail prettier. To match CI behavior, we check only git-tracked files.
 set -euo pipefail
 
 cd "$(git rev-parse --show-toplevel)"
 
-echo "=== Check formatting ==="
-# Only check git-tracked files to match CI (clean checkout).
-# Untracked x.* scratch files would otherwise cause false failures.
+echo "=== Check formatting (git-tracked files only) ==="
 git ls-files -z '*.ts' '*.tsx' '*.js' '*.jsx' '*.json' '*.md' '*.yml' '*.yaml' '*.css' '*.html' \
   | xargs -0 npx prettier --check
 
