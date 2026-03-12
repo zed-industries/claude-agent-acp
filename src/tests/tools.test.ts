@@ -11,7 +11,12 @@ import {
   BetaBashCodeExecutionToolResultBlockParam,
 } from "@anthropic-ai/sdk/resources/beta.mjs";
 import { toAcpNotifications, ToolUseCache, Logger } from "../acp-agent.js";
-import { toolUpdateFromToolResult, createPostToolUseHook, registerHookCallback, stashedHookInputs } from "../tools.js";
+import {
+  toolUpdateFromToolResult,
+  createPostToolUseHook,
+  registerHookCallback,
+  stashedHookInputs,
+} from "../tools.js";
 
 describe("rawOutput in tool call updates", () => {
   const mockClient = {} as AgentSideConnection;
@@ -1374,9 +1379,13 @@ describe("Bash terminal output", () => {
       await hook(postToolUseInput("toolu_noerr_b", "Grep"), "toolu_noerr_b", {
         signal: AbortSignal.abort(),
       });
-      registerHookCallback("toolu_noerr_b", {
-        onPostToolUseHook: async () => {},
-      }, spyLogger);
+      registerHookCallback(
+        "toolu_noerr_b",
+        {
+          onPostToolUseHook: async () => {},
+        },
+        spyLogger,
+      );
       await flushMicrotasks();
 
       expect(errors).toHaveLength(0);
@@ -1512,11 +1521,9 @@ describe("Bash terminal output", () => {
       });
 
       // Fire hook for a completely different ID.
-      await hook(
-        postToolUseInput("toolu_diff_iso_1", "Bash"),
-        "toolu_diff_iso_1",
-        { signal: AbortSignal.abort() },
-      );
+      await hook(postToolUseInput("toolu_diff_iso_1", "Bash"), "toolu_diff_iso_1", {
+        signal: AbortSignal.abort(),
+      });
 
       await flushMicrotasks();
 
@@ -1533,21 +1540,15 @@ describe("Bash terminal output", () => {
       const hook = createPostToolUseHook(mockLogger);
 
       // Fire 3 hooks in quick succession — none have callbacks yet.
-      const resultA = await hook(
-        postToolUseInput("toolu_bat_a", "Bash"),
-        "toolu_bat_a",
-        { signal: AbortSignal.abort() },
-      );
-      const resultB = await hook(
-        postToolUseInput("toolu_bat_b", "Glob"),
-        "toolu_bat_b",
-        { signal: AbortSignal.abort() },
-      );
-      const resultC = await hook(
-        postToolUseInput("toolu_bat_c", "Read"),
-        "toolu_bat_c",
-        { signal: AbortSignal.abort() },
-      );
+      const resultA = await hook(postToolUseInput("toolu_bat_a", "Bash"), "toolu_bat_a", {
+        signal: AbortSignal.abort(),
+      });
+      const resultB = await hook(postToolUseInput("toolu_bat_b", "Glob"), "toolu_bat_b", {
+        signal: AbortSignal.abort(),
+      });
+      const resultC = await hook(postToolUseInput("toolu_bat_c", "Read"), "toolu_bat_c", {
+        signal: AbortSignal.abort(),
+      });
 
       // All return immediately.
       expect(resultA).toEqual({ continue: true });
@@ -1579,11 +1580,9 @@ describe("Bash terminal output", () => {
       const hook = createPostToolUseHook(mockLogger);
 
       // Fire without registration — should stash and return immediately.
-      const result = await hook(
-        postToolUseInput("toolu_cont_1", "Agent"),
-        "toolu_cont_1",
-        { signal: AbortSignal.abort() },
-      );
+      const result = await hook(postToolUseInput("toolu_cont_1", "Agent"), "toolu_cont_1", {
+        signal: AbortSignal.abort(),
+      });
 
       expect(result).toEqual({ continue: true });
     });
@@ -1600,23 +1599,27 @@ describe("Bash terminal output", () => {
       const hook = createPostToolUseHook(spyLogger);
 
       // Fire hook — stash input.
-      await hook(
-        postToolUseInput("toolu_err_1", "Bash", {}, ""),
-        "toolu_err_1",
-        { signal: AbortSignal.abort() },
-      );
+      await hook(postToolUseInput("toolu_err_1", "Bash", {}, ""), "toolu_err_1", {
+        signal: AbortSignal.abort(),
+      });
 
       // Register a callback that throws.
-      registerHookCallback("toolu_err_1", {
-        onPostToolUseHook: async () => {
-          throw new Error("callback boom");
+      registerHookCallback(
+        "toolu_err_1",
+        {
+          onPostToolUseHook: async () => {
+            throw new Error("callback boom");
+          },
         },
-      }, spyLogger);
+        spyLogger,
+      );
 
       await flushMicrotasks();
 
       // Error should be logged, not thrown.
-      expect(errors.some((e) => e.includes("stashed hook callback error") && e.includes("toolu_err_1"))).toBe(true);
+      expect(
+        errors.some((e) => e.includes("stashed hook callback error") && e.includes("toolu_err_1")),
+      ).toBe(true);
     });
   });
 });
