@@ -593,8 +593,10 @@ export class ClaudeAcpAgent implements Agent {
               case "task_started":
                 // Track background task IDs so we can detect when an
                 // internal turn (task_notification → assistant → result)
-                // may follow the user's result message.
-                if (message.task_id) {
+                // may follow the user's result message. Only track
+                // local_bash tasks — the SDK already defers results for
+                // local_agent tasks (via its internal iP() check).
+                if (message.task_id && (message as any).task_type === "local_bash") {
                   pendingTaskIds.add(message.task_id);
                 }
                 break;
@@ -697,6 +699,10 @@ export class ClaudeAcpAgent implements Agent {
                 // doesn't expose an idle/hasPending signal.
                 // See: x.codex-review-fix2.md, x.codex-review-fix3.md
                 if (0 < pendingTaskIds.size) {
+                  // Yield to the event loop before peeking. The SDK
+                  // enqueues task_notification asynchronously after the
+                  // result; a microtask yield gives it a chance to land.
+                  await new Promise((r) => setTimeout(r, 0));
                   const queryInternal = session.query as any;
                   const nextQueued = queryInternal.inputStream?.queue?.[0];
                   if (
