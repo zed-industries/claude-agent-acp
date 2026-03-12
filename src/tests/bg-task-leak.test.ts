@@ -102,7 +102,12 @@ function createAgentWithSession(
     cwd: "/test",
     permissionMode: "default",
     settingsManager: { getSettings: () => ({}) },
-    accumulatedUsage: { inputTokens: 0, outputTokens: 0, cachedReadTokens: 0, cachedWriteTokens: 0 },
+    accumulatedUsage: {
+      inputTokens: 0,
+      outputTokens: 0,
+      cachedReadTokens: 0,
+      cachedWriteTokens: 0,
+    },
     configOptions: [],
     promptRunning: false,
     pendingMessages: new Map(),
@@ -194,7 +199,12 @@ function makeNormalTurnMessages(text = "Hello") {
         type: "message",
         stop_reason: null,
         stop_sequence: null,
-        usage: { input_tokens: 10, output_tokens: 5, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 },
+        usage: {
+          input_tokens: 10,
+          output_tokens: 5,
+          cache_read_input_tokens: 0,
+          cache_creation_input_tokens: 0,
+        },
       },
       parent_tool_use_id: null,
       session_id: SESSION_ID,
@@ -208,7 +218,8 @@ function makeNormalTurnMessages(text = "Hello") {
  * Extracted from SDK trace lines 149-172.
  */
 function makeBgTaskInternalTurnMessages() {
-  const bgText = "\n\nThe background task from the subagent completed. Still waiting on your answer.";
+  const bgText =
+    "\n\nThe background task from the subagent completed. Still waiting on your answer.";
   return [
     // task_notification: bg bash completed
     {
@@ -222,11 +233,21 @@ function makeBgTaskInternalTurnMessages() {
       session_id: SESSION_ID,
     },
     // init: internal turn begins
-    { type: "system", subtype: "init", cwd: "/test", session_id: SESSION_ID, tools: [], model: "test" },
+    {
+      type: "system",
+      subtype: "init",
+      cwd: "/test",
+      session_id: SESSION_ID,
+      tools: [],
+      model: "test",
+    },
     // streaming
     {
       type: "stream_event",
-      event: { type: "message_start", message: { model: "test", role: "assistant", content: [], id: "msg_internal" } },
+      event: {
+        type: "message_start",
+        message: { model: "test", role: "assistant", content: [], id: "msg_internal" },
+      },
       parent_tool_use_id: null,
       session_id: SESSION_ID,
     },
@@ -253,7 +274,12 @@ function makeBgTaskInternalTurnMessages() {
         type: "message",
         stop_reason: null,
         stop_sequence: null,
-        usage: { input_tokens: 3, output_tokens: 31, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 },
+        usage: {
+          input_tokens: 3,
+          output_tokens: 31,
+          cache_read_input_tokens: 0,
+          cache_creation_input_tokens: 0,
+        },
       },
       parent_tool_use_id: null,
       session_id: SESSION_ID,
@@ -266,7 +292,11 @@ function makeBgTaskInternalTurnMessages() {
     },
     {
       type: "stream_event",
-      event: { type: "message_delta", delta: { stop_reason: "end_turn" }, usage: { output_tokens: 31 } },
+      event: {
+        type: "message_delta",
+        delta: { stop_reason: "end_turn" },
+        usage: { output_tokens: 31 },
+      },
       parent_tool_use_id: null,
       session_id: SESSION_ID,
     },
@@ -714,22 +744,40 @@ describe("Background task notification leak", () => {
           summary: "Second background command completed",
           session_id: SESSION_ID,
         },
-        { type: "system", subtype: "init", cwd: "/test", session_id: SESSION_ID, tools: [], model: "test" },
+        {
+          type: "system",
+          subtype: "init",
+          cwd: "/test",
+          session_id: SESSION_ID,
+          tools: [],
+          model: "test",
+        },
         {
           type: "stream_event",
-          event: { type: "message_start", message: { model: "test", role: "assistant", content: [], id: "msg_b" } },
+          event: {
+            type: "message_start",
+            message: { model: "test", role: "assistant", content: [], id: "msg_b" },
+          },
           parent_tool_use_id: null,
           session_id: SESSION_ID,
         },
         {
           type: "stream_event",
-          event: { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } },
+          event: {
+            type: "content_block_start",
+            index: 0,
+            content_block: { type: "text", text: "" },
+          },
           parent_tool_use_id: null,
           session_id: SESSION_ID,
         },
         {
           type: "stream_event",
-          event: { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: bgTextB } },
+          event: {
+            type: "content_block_delta",
+            index: 0,
+            delta: { type: "text_delta", text: bgTextB },
+          },
           parent_tool_use_id: null,
           session_id: SESSION_ID,
         },
@@ -743,7 +791,12 @@ describe("Background task notification leak", () => {
             type: "message",
             stop_reason: null,
             stop_sequence: null,
-            usage: { input_tokens: 3, output_tokens: 10, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 },
+            usage: {
+              input_tokens: 3,
+              output_tokens: 10,
+              cache_read_input_tokens: 0,
+              cache_creation_input_tokens: 0,
+            },
           },
           parent_tool_use_id: null,
           session_id: SESSION_ID,
