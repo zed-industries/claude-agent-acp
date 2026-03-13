@@ -286,7 +286,9 @@ export class ClaudeAcpAgent implements Agent {
 
     // Bypasses standard auth by routing requests through a custom Anthropic-protocol gateway.
     // Only offered when the client advertises `auth._meta.gateway` capability.
-    const supportsGatewayAuth = request.clientCapabilities?.auth?._meta?.gateway === true;
+    // auth is an ACP extension not yet in the ClientCapabilities type
+    const caps = request.clientCapabilities as any;
+    const supportsGatewayAuth = caps?.auth?._meta?.gateway === true;
 
     const gatewayAuthMethod: AuthMethod = {
       id: "gateway",
@@ -306,7 +308,7 @@ export class ClaudeAcpAgent implements Agent {
       type: "terminal",
       args: ["--cli"],
     };
-    const supportsTerminalAuth = request.clientCapabilities?.auth?.terminal === true;
+    const supportsTerminalAuth = caps?.auth?.terminal === true;
 
     // If client supports terminal-auth capability, use that instead.
     const supportsMetaTerminalAuth = request.clientCapabilities?._meta?.["terminal-auth"] === true;
@@ -508,6 +510,13 @@ export class ClaudeAcpAgent implements Agent {
 
     session.promptRunning = true;
     let handedOff = false;
+    // Saved prompt response when consuming internal turns from background
+    // task completions. See the "success" result handler below.
+    let savedPromptResponse: PromptResponse | undefined;
+    // Track background task IDs from system/task_started messages.
+    // Resolved when we see system/task_notification with a terminal status.
+    // Used to decide whether to peek at the queue after a result.
+    const pendingTaskIds = new Set<string>();
 
     try {
       while (true) {
@@ -566,11 +575,32 @@ export class ClaudeAcpAgent implements Agent {
               case "hook_progress":
               case "hook_response":
               case "files_persisted":
-              case "task_started":
-              case "task_notification":
-              case "task_progress":
               case "elicitation_complete":
                 // Todo: process via status api: https://docs.claude.com/en/docs/claude-code/hooks#hook-output
+                break;
+              case "task_started":
+                // Track background task IDs so we can detect when an
+                // internal turn (task_notification → assistant → result)
+                // may follow the user's result message. Only track
+                // local_bash tasks — the SDK already defers results for
+                // local_agent tasks (via its internal iP() check —
+                // minified name, likely hasRunningDeferrableTasks).
+                if (message.task_id && (message as any).task_type === "local_bash") {
+                  pendingTaskIds.add(message.task_id);
+                }
+                break;
+              case "task_notification": {
+                // Resolve the task ID when the SDK reports completion.
+                const status = (message as any).status;
+                if (
+                  message.task_id &&
+                  (status === "completed" || status === "failed" || status === "stopped")
+                ) {
+                  pendingTaskIds.delete(message.task_id);
+                }
+                break;
+              }
+              case "task_progress":
                 break;
               default:
                 unreachable(message, this.logger);
@@ -640,6 +670,65 @@ export class ClaudeAcpAgent implements Agent {
                 }
                 if (message.is_error) {
                   throw RequestError.internalError(undefined, message.result);
+                }
+
+                // Workaround: detect and consume SDK internal turns from
+                // background task completions before returning. The SDK defers
+                // result messages for running local_agent tasks but NOT for
+                // local_bash background tasks, so background Bash completions
+                // arrive after the result as: task_notification → assistant →
+                // result. See x.sdk-trace-bg-leak.ndjson for the observed
+                // message sequence.
+                //
+                // Defense layers:
+                // 1. Only peek if we saw task_started during the turn
+                //    (pendingTaskIds tracks unresolved background tasks)
+                // 2. Peek at SDK internal queue (inputStream.queue[0]) to
+                //    check if task_notification is already buffered
+                // 3. Log a warning if tasks are pending but queue is empty
+                //    (the theoretical race codex identified)
+                //
+                // This accesses SDK internals (not a public API). The SDK
+                // doesn't expose an idle/hasPending signal.
+                // See: x.codex-review-fix2.md, x.codex-review-fix3.md
+                if (0 < pendingTaskIds.size) {
+                  // Yield to the event loop (macrotask via setTimeout)
+                  // before peeking. The SDK enqueues task_notification
+                  // asynchronously after the result; yielding gives it
+                  // a chance to land. This is best-effort — if the
+                  // notification arrives later, the warning below fires.
+                  await new Promise((r) => setTimeout(r, 0));
+                  const queryInternal = session.query as any;
+                  const nextQueued = queryInternal.inputStream?.queue?.[0];
+                  if (
+                    nextQueued &&
+                    nextQueued.type === "system" &&
+                    nextQueued.subtype === "task_notification"
+                  ) {
+                    // Next message is a task_notification — an internal turn
+                    // from a background task completion. Keep consuming.
+                    savedPromptResponse = { stopReason: "end_turn", usage };
+                    break;
+                  }
+
+                  // Pending tasks exist but queue is empty. This is the race
+                  // condition where task_notification hasn't been enqueued yet.
+                  // Log a warning — the next prompt() may see leaked messages.
+                  // This gives us observability to file upstream with evidence.
+                  if (!nextQueued) {
+                    this.logger.log(
+                      `[bg-task-leak] result received with ${pendingTaskIds.size} unresolved ` +
+                        `background task(s) [${[...pendingTaskIds].join(", ")}] but no ` +
+                        `task_notification in queue — possible internal turn leak into next prompt`,
+                    );
+                  }
+                }
+
+                // No pending tasks, or pending but queue doesn't have
+                // task_notification — return the response.
+                if (savedPromptResponse) {
+                  savedPromptResponse.usage = usage;
+                  return savedPromptResponse;
                 }
                 return { stopReason: "end_turn", usage };
               }
@@ -1816,34 +1905,38 @@ export function toAcpNotifications(
         } else {
           // Only register hooks on first encounter to avoid double-firing
           if (registerHooks && !alreadyCached) {
-            registerHookCallback(chunk.id, {
-              onPostToolUseHook: async (toolUseId, toolInput, toolResponse) => {
-                const toolUse = toolUseCache[toolUseId];
-                if (toolUse) {
-                  const editDiff =
-                    toolUse.name === "Edit" ? toolUpdateFromEditToolResponse(toolResponse) : {};
-                  const update: SessionNotification["update"] = {
-                    _meta: {
-                      claudeCode: {
-                        toolResponse,
-                        toolName: toolUse.name,
-                      },
-                    } satisfies ToolUpdateMeta,
-                    toolCallId: toolUseId,
-                    sessionUpdate: "tool_call_update",
-                    ...editDiff,
-                  };
-                  await client.sessionUpdate({
-                    sessionId,
-                    update,
-                  });
-                } else {
-                  logger.error(
-                    `[claude-agent-acp] Got a tool response for tool use that wasn't tracked: ${toolUseId}`,
-                  );
-                }
+            registerHookCallback(
+              chunk.id,
+              {
+                onPostToolUseHook: async (toolUseId, toolInput, toolResponse) => {
+                  const toolUse = toolUseCache[toolUseId];
+                  if (toolUse) {
+                    const editDiff =
+                      toolUse.name === "Edit" ? toolUpdateFromEditToolResponse(toolResponse) : {};
+                    const update: SessionNotification["update"] = {
+                      _meta: {
+                        claudeCode: {
+                          toolResponse,
+                          toolName: toolUse.name,
+                        },
+                      } satisfies ToolUpdateMeta,
+                      toolCallId: toolUseId,
+                      sessionUpdate: "tool_call_update",
+                      ...editDiff,
+                    };
+                    await client.sessionUpdate({
+                      sessionId,
+                      update,
+                    });
+                  } else {
+                    logger.error(
+                      `[claude-agent-acp] Got a tool response for tool use that wasn't tracked: ${toolUseId}`,
+                    );
+                  }
+                },
               },
-            });
+              logger,
+            );
           }
 
           let rawInput;
