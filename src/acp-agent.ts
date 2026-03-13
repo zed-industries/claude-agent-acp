@@ -888,6 +888,9 @@ export class ClaudeAcpAgent implements Agent {
     if (!session) {
       throw new Error("Session not found");
     }
+    if (typeof params.value !== "string") {
+      throw new Error(`Invalid value for config option ${params.configId}: ${params.value}`);
+    }
 
     const option = session.configOptions.find((o) => o.id === params.configId);
     if (!option) {
@@ -917,7 +920,9 @@ export class ClaudeAcpAgent implements Agent {
     }
 
     session.configOptions = session.configOptions.map((o) =>
-      o.id === params.configId ? { ...o, currentValue: params.value } : o,
+      o.id === params.configId && typeof o.currentValue === "string"
+        ? { ...o, currentValue: params.value }
+        : o,
     );
 
     return { configOptions: session.configOptions };
@@ -1142,7 +1147,7 @@ export class ClaudeAcpAgent implements Agent {
     if (!session) return;
 
     session.configOptions = session.configOptions.map((o) =>
-      o.id === configId ? { ...o, currentValue: value } : o,
+      o.id === configId && typeof o.currentValue === "string" ? { ...o, currentValue: value } : o,
     );
 
     await this.client.sessionUpdate({
