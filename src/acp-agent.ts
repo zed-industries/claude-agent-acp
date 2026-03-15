@@ -486,6 +486,15 @@ export class ClaudeAcpAgent implements Agent {
     const isLocalOnlyCommand =
       firstText.startsWith("/") && LOCAL_ONLY_COMMANDS.has(firstText.split(" ", 1)[0]);
 
+    // backgroundInitPending tracks whether a system "init" message arrived
+    // without any subsequent activity (stream_event, assistant, or system
+    // messages that indicate real processing). A background task that
+    // completed after the previous prompt loop ended produces
+    // init → result with nothing in between. Our own prompt's processing
+    // always generates stream_event / assistant messages before its result,
+    // so the flag gets cleared before we see the result.
+    let backgroundInitPending = false;
+
     if (session.promptRunning) {
       session.input.push(userMessage);
       const order = session.nextPendingOrder++;
@@ -525,6 +534,10 @@ export class ClaudeAcpAgent implements Agent {
           case "system":
             switch (message.subtype) {
               case "init":
+                // A new processing cycle started. If this is a
+                // background task, its result will follow immediately
+                // without intervening stream_event / assistant messages.
+                backgroundInitPending = true;
                 break;
               case "status": {
                 if (message.status === "compacting") {
@@ -566,6 +579,7 @@ export class ClaudeAcpAgent implements Agent {
                     content: { type: "text", text: "\n\nCompacting completed." },
                   },
                 });
+                backgroundInitPending = false;
                 break;
               }
               case "local_command_output": {
@@ -576,12 +590,7 @@ export class ClaudeAcpAgent implements Agent {
                     content: { type: "text", text: message.content },
                   },
                 });
-                break;
-              }
-              case "session_state_changed": {
-                if (message.state === "idle") {
-                  return { stopReason, usage: sessionUsage(session) };
-                }
+                backgroundInitPending = false;
                 break;
               }
               case "hook_started":
@@ -650,8 +659,13 @@ export class ClaudeAcpAgent implements Agent {
               });
             }
 
-            if (session.cancelled) {
-              stopReason = "cancelled";
+            if (backgroundInitPending) {
+              // This result immediately followed an init with no
+              // intervening activity — it belongs to a background task
+              // that finished after the previous prompt loop ended.
+              // Consume it and continue waiting for our own result.
+              this.logger.log(`Session ${params.sessionId}: consuming background task result`);
+              backgroundInitPending = false;
               break;
             }
 
@@ -774,6 +788,9 @@ export class ClaudeAcpAgent implements Agent {
             break;
           }
           case "stream_event": {
+            // Stream events indicate active processing for our prompt,
+            // so clear any pending background init.
+            backgroundInitPending = false;
             for (const notification of streamEventToAcpNotifications(
               message,
               params.sessionId,
@@ -798,6 +815,9 @@ export class ClaudeAcpAgent implements Agent {
             // Check for prompt replay
             if (message.type === "user" && "uuid" in message && message.uuid) {
               if (message.uuid === promptUuid) {
+                // Our own prompt was replayed back — clear any pending
+                // background init since we're now processing our prompt.
+                backgroundInitPending = false;
                 break;
               }
 
@@ -815,6 +835,9 @@ export class ClaudeAcpAgent implements Agent {
                 break;
               }
             }
+
+            // Non-replay user/assistant messages indicate active processing.
+            backgroundInitPending = false;
 
             // Store latest assistant usage (excluding subagents)
             // Sum all token types as a proxy for post-turn context occupancy:
