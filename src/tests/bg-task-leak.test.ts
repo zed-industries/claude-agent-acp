@@ -1011,6 +1011,62 @@ describe("Background task notification leak", () => {
       }
     });
 
+    it("cancellation during backgroundInitPending consumption returns immediately", async () => {
+      // Regression test: if cancel arrives while the prompt loop is consuming
+      // background task init → result cycles (backgroundInitPending), the
+      // cancellation check must fire before the init consumption loop re-enters
+      // await session.query.next(). Otherwise prompt() hangs forever because
+      // the SDK was cancelled and will never produce "our" result.
+      //
+      // Sequence: init (bg) → result (consumed by backgroundInitPending) →
+      //           cancel arrives → init (bg) → result → should return cancelled
+      //
+      // Before the fix, session.cancelled was checked AFTER backgroundInitPending,
+      // so the loop kept consuming init → result pairs indefinitely.
+      const messages: any[] = [
+        // Our prompt's init
+        { type: "system", subtype: "init", session_id: SESSION_ID },
+        // Background task init → result (consumed by backgroundInitPending)
+        { type: "system", subtype: "init", session_id: SESSION_ID },
+        makeResultMessage("bg task 1 done"),
+        // Another background task init → result (cancel should fire before this is consumed)
+        { type: "system", subtype: "init", session_id: SESSION_ID },
+        makeResultMessage("bg task 2 done"),
+      ];
+
+      const mockQuery = createMockQuery(messages);
+      const { client } = createMockClient();
+      const agent = createAgentWithSession(mockQuery, client);
+
+      // Set cancelled before the prompt starts — simulates cancel arriving
+      // while the SDK is emitting background task sequences
+      const session = (agent as any).sessions[SESSION_ID];
+
+      // Schedule cancellation after the first background init → result pair
+      // is consumed. The prompt loop processes messages synchronously per
+      // iteration, so we set cancelled between iterations.
+      const origNext = mockQuery.next.bind(mockQuery);
+      let resultsSeen = 0;
+      (mockQuery as any).next = async () => {
+        const item = await origNext();
+        if (item.value?.type === "result") {
+          resultsSeen++;
+          if (1 <= resultsSeen) {
+            // Cancel after the first result (which backgroundInitPending consumes)
+            session.cancelled = true;
+          }
+        }
+        return item;
+      };
+
+      const result = await agent.prompt({
+        sessionId: SESSION_ID,
+        prompt: [{ type: "text", text: "test" }],
+      });
+
+      expect(result.stopReason).toBe("cancelled");
+    });
+
     it("detects task_notification even when other messages are queued before it", async () => {
       // The poll loop scans the entire queue, not just queue[0]. If an
       // init message is queued before the task_notification, the loop
