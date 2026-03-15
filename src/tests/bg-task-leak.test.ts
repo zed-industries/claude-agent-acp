@@ -581,14 +581,18 @@ describe("Background task notification leak", () => {
         await vi.advanceTimersByTimeAsync(1_000);
 
         // Should have the immediate entry log
-        const entryLogs = logs.filter((l) => l.includes("[bg-task-poll] waiting for background tasks"));
+        const entryLogs = logs.filter((l) =>
+          l.includes("[bg-task-poll] waiting for background tasks"),
+        );
         expect(1 <= entryLogs.length).toBe(true);
         expect(entryLogs[0]).toContain("log-task");
         expect(entryLogs[0]).toContain("cancellation risks later prompt contamination");
 
         // Advance 30s more for the throttled repeat log
         await vi.advanceTimersByTimeAsync(30_000);
-        const repeatLogs = logs.filter((l) => l.includes("[bg-task-poll] waiting for background tasks"));
+        const repeatLogs = logs.filter((l) =>
+          l.includes("[bg-task-poll] waiting for background tasks"),
+        );
         expect(2 <= repeatLogs.length).toBe(true);
 
         // Cancel to escape the indefinite loop
