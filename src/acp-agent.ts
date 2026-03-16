@@ -112,9 +112,10 @@ type Session = {
   input: Pushable<SDKUserMessage>;
   cancelled: boolean;
   cwd: string;
-  permissionMode: PermissionMode;
   settingsManager: SettingsManager;
   accumulatedUsage: AccumulatedUsage;
+  modes: SessionModeState;
+  models: SessionModelState;
   configOptions: SessionConfigOption[];
   promptRunning: boolean;
   pendingMessages: Map<string, { resolve: (cancelled: boolean) => void; order: number }>;
@@ -398,34 +399,17 @@ export class ClaudeAcpAgent implements Agent {
   }
 
   async unstable_resumeSession(params: ResumeSessionRequest): Promise<ResumeSessionResponse> {
-    const response = await this.createSession(
-      {
-        cwd: params.cwd,
-        mcpServers: params.mcpServers ?? [],
-        _meta: params._meta,
-      },
-      {
-        resume: params.sessionId,
-      },
-    );
+    const result = await this.getOrCreateSession(params);
+
     // Needs to happen after we return the session
     setTimeout(() => {
-      this.sendAvailableCommandsUpdate(response.sessionId);
+      this.sendAvailableCommandsUpdate(params.sessionId);
     }, 0);
-    return response;
+    return result;
   }
 
   async loadSession(params: LoadSessionRequest): Promise<LoadSessionResponse> {
-    const response = await this.createSession(
-      {
-        cwd: params.cwd,
-        mcpServers: params.mcpServers ?? [],
-        _meta: params._meta,
-      },
-      {
-        resume: params.sessionId,
-      },
-    );
+    const result = await this.getOrCreateSession(params);
 
     await this.replaySessionHistory(params.sessionId);
 
@@ -434,11 +418,7 @@ export class ClaudeAcpAgent implements Agent {
       this.sendAvailableCommandsUpdate(params.sessionId);
     }, 0);
 
-    return {
-      modes: response.modes,
-      models: response.models,
-      configOptions: response.configOptions,
-    };
+    return result;
   }
 
   async unstable_listSessions(params: ListSessionsRequest): Promise<ListSessionsResponse> {
@@ -941,6 +921,8 @@ export class ClaudeAcpAgent implements Agent {
       await this.sessions[params.sessionId].query.setModel(params.value);
     }
 
+    this.syncSessionConfigState(session, params.configId, params.value);
+
     session.configOptions = session.configOptions.map((o) =>
       o.id === params.configId && typeof o.currentValue === "string"
         ? { ...o, currentValue: params.value }
@@ -961,7 +943,6 @@ export class ClaudeAcpAgent implements Agent {
       default:
         throw new Error("Invalid Mode");
     }
-    this.sessions[sessionId].permissionMode = modeId;
     try {
       await this.sessions[sessionId].query.setPermissionMode(modeId);
     } catch (error) {
@@ -1064,7 +1045,6 @@ export class ClaudeAcpAgent implements Agent {
             response.outcome.optionId === "acceptEdits" ||
             response.outcome.optionId === "bypassPermissions")
         ) {
-          session.permissionMode = response.outcome.optionId;
           await this.client.sessionUpdate({
             sessionId,
             update: {
@@ -1089,7 +1069,7 @@ export class ClaudeAcpAgent implements Agent {
         }
       }
 
-      if (session.permissionMode === "bypassPermissions") {
+      if (session.modes.currentModeId === "bypassPermissions") {
         return {
           behavior: "allow",
           updatedInput: toolInput,
@@ -1176,6 +1156,8 @@ export class ClaudeAcpAgent implements Agent {
     const session = this.sessions[sessionId];
     if (!session) return;
 
+    this.syncSessionConfigState(session, configId, value);
+
     session.configOptions = session.configOptions.map((o) =>
       o.id === configId && typeof o.currentValue === "string" ? { ...o, currentValue: value } : o,
     );
@@ -1187,6 +1169,49 @@ export class ClaudeAcpAgent implements Agent {
         configOptions: session.configOptions,
       },
     });
+  }
+
+  private syncSessionConfigState(session: Session, configId: string, value: string): void {
+    if (configId === "mode") {
+      session.modes = { ...session.modes, currentModeId: value };
+    } else if (configId === "model") {
+      session.models = { ...session.models, currentModelId: value };
+    }
+  }
+
+  private async getOrCreateSession(params: {
+    sessionId: string;
+    cwd: string;
+    mcpServers?: NewSessionRequest["mcpServers"];
+    _meta?: NewSessionRequest["_meta"];
+  }): Promise<NewSessionResponse> {
+    const existingSession = this.sessions[params.sessionId];
+    if (existingSession) {
+      return {
+        sessionId: params.sessionId,
+        modes: existingSession.modes,
+        models: existingSession.models,
+        configOptions: existingSession.configOptions,
+      };
+    }
+
+    const response = await this.createSession(
+      {
+        cwd: params.cwd,
+        mcpServers: params.mcpServers ?? [],
+        _meta: params._meta,
+      },
+      {
+        resume: params.sessionId,
+      },
+    );
+
+    return {
+      sessionId: response.sessionId,
+      modes: response.modes,
+      models: response.models,
+      configOptions: response.configOptions,
+    };
   }
 
   private async createSession(
@@ -1315,10 +1340,6 @@ export class ClaudeAcpAgent implements Agent {
             hooks: [
               createPostToolUseHook(this.logger, {
                 onEnterPlanMode: async () => {
-                  const session = this.sessions[sessionId];
-                  if (session) {
-                    session.permissionMode = "plan";
-                  }
                   await this.client.sessionUpdate({
                     sessionId,
                     update: {
@@ -1418,7 +1439,6 @@ export class ClaudeAcpAgent implements Agent {
       input: input,
       cancelled: false,
       cwd: params.cwd,
-      permissionMode,
       settingsManager,
       accumulatedUsage: {
         inputTokens: 0,
@@ -1426,6 +1446,8 @@ export class ClaudeAcpAgent implements Agent {
         cachedReadTokens: 0,
         cachedWriteTokens: 0,
       },
+      modes,
+      models,
       configOptions,
       promptRunning: false,
       pendingMessages: new Map(),

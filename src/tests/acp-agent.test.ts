@@ -1328,7 +1328,14 @@ describe("stop reason propagation", () => {
       input,
       cancelled: false,
       cwd: "/test",
-      permissionMode: "default",
+      modes: {
+        currentModeId: "default",
+        availableModes: [],
+      },
+      models: {
+        currentModelId: "default",
+        availableModels: [],
+      },
       settingsManager: {} as any,
       accumulatedUsage: {
         inputTokens: 0,
@@ -1455,7 +1462,14 @@ describe("stop reason propagation", () => {
       input,
       cwd: "/tmp/test",
       cancelled: false,
-      permissionMode: "default",
+      modes: {
+        currentModeId: "default",
+        availableModes: [],
+      },
+      models: {
+        currentModelId: "default",
+        availableModels: [],
+      },
       settingsManager: {} as any,
       accumulatedUsage: {
         inputTokens: 0,
@@ -1521,7 +1535,14 @@ describe("session/close", () => {
       input: new Pushable(),
       cancelled: false,
       cwd: "/test",
-      permissionMode: "default",
+      modes: {
+        currentModeId: "default",
+        availableModes: [],
+      },
+      models: {
+        currentModelId: "default",
+        availableModels: [],
+      },
       settingsManager: {} as any,
       accumulatedUsage: {
         inputTokens: 0,
