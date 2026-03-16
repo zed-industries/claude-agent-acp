@@ -639,13 +639,16 @@ export class ClaudeAcpAgent implements Agent {
                 // For local-only commands (no model invocation), the result
                 // text is the command output — forward it to the client.
                 if (isLocalOnlyCommand) {
-                  await this.client.sessionUpdate({
-                    sessionId: params.sessionId,
-                    update: {
-                      sessionUpdate: "agent_message_chunk",
-                      content: { type: "text", text: message.result },
-                    },
-                  });
+                  for (const notification of toAcpNotifications(
+                    message.result,
+                    "assistant",
+                    params.sessionId,
+                    this.toolUseCache,
+                    this.client,
+                    this.logger,
+                  )) {
+                    await this.client.sessionUpdate(notification);
+                  }
                 }
                 return { stopReason: "end_turn", usage };
               }
