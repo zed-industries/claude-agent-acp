@@ -58,7 +58,6 @@ import { ContentBlockParam } from "@anthropic-ai/sdk/resources";
 import { BetaContentBlock, BetaRawContentBlockDelta } from "@anthropic-ai/sdk/resources/beta.mjs";
 import { randomUUID } from "node:crypto";
 import * as fs from "node:fs";
-import * as path from "node:path";
 import packageJson from "../package.json" with { type: "json" };
 import {
   getClaudeAuthPaths,
@@ -97,6 +96,11 @@ function sanitizeTitle(text: string): string {
 export interface Logger {
   log: (...args: any[]) => void;
   error: (...args: any[]) => void;
+}
+
+export interface ClaudeAcpAgentOptions {
+  logger?: Logger;
+  defaultTools?: Options["tools"];
 }
 
 type AccumulatedUsage = {
@@ -276,6 +280,20 @@ function claudeInvocationPathsFromMeta(meta?: unknown): ClaudeInvocationPaths {
   return resolveClaudeInvocationPaths(claudeCodeMeta?.configDir);
 }
 
+function toClaudeAcpAgentOptions(
+  value?: Logger | ClaudeAcpAgentOptions,
+): ClaudeAcpAgentOptions | undefined {
+  if (!value) {
+    return undefined;
+  }
+
+  if ("defaultTools" in value || "logger" in value) {
+    return value;
+  }
+
+  return undefined;
+}
+
 // Implement the ACP Agent interface
 export class ClaudeAcpAgent implements Agent {
   sessions: {
@@ -287,12 +305,22 @@ export class ClaudeAcpAgent implements Agent {
   clientCapabilities?: ClientCapabilities;
   logger: Logger;
   gatewayAuthMeta?: GatewayAuthMeta;
+  defaultTools?: Options["tools"];
 
-  constructor(client: AgentSideConnection, logger?: Logger) {
+  constructor(client: AgentSideConnection, logger?: Logger, options?: ClaudeAcpAgentOptions);
+  constructor(client: AgentSideConnection, options?: ClaudeAcpAgentOptions);
+  constructor(
+    client: AgentSideConnection,
+    loggerOrOptions?: Logger | ClaudeAcpAgentOptions,
+    maybeOptions?: ClaudeAcpAgentOptions,
+  ) {
     this.sessions = {};
     this.client = client;
     this.toolUseCache = {};
-    this.logger = logger ?? console;
+    const resolvedOptions = maybeOptions ?? toClaudeAcpAgentOptions(loggerOrOptions);
+    const resolvedLogger = maybeOptions ? (loggerOrOptions as Logger | undefined) : undefined;
+    this.logger = resolvedOptions?.logger ?? resolvedLogger ?? console;
+    this.defaultTools = resolvedOptions?.defaultTools;
   }
 
   async initialize(request: InitializeRequest): Promise<InitializeResponse> {
@@ -374,11 +402,7 @@ export class ClaudeAcpAgent implements Agent {
   async newSession(params: NewSessionRequest): Promise<NewSessionResponse> {
     const invocationPaths = claudeInvocationPathsFromMeta(params._meta);
     const { authFile, backupFile } = getClaudeAuthPaths(invocationPaths);
-    if (
-      !this.gatewayAuthMeta &&
-      fs.existsSync(backupFile) &&
-      !fs.existsSync(authFile)
-    ) {
+    if (!this.gatewayAuthMeta && fs.existsSync(backupFile) && !fs.existsSync(authFile)) {
       throw RequestError.authRequired();
     }
 
@@ -910,22 +934,23 @@ export class ClaudeAcpAgent implements Agent {
     if (!validValue) {
       throw new Error(`Invalid value for config option ${params.configId}: ${params.value}`);
     }
+    const selectedValue = String(validValue.value);
 
     if (params.configId === "mode") {
-      await this.applySessionMode(params.sessionId, params.value);
+      await this.applySessionMode(params.sessionId, selectedValue);
       await this.client.sessionUpdate({
         sessionId: params.sessionId,
         update: {
           sessionUpdate: "current_mode_update",
-          currentModeId: params.value,
+          currentModeId: selectedValue,
         },
       });
     } else if (params.configId === "model") {
-      await this.sessions[params.sessionId].query.setModel(params.value);
+      await this.sessions[params.sessionId].query.setModel(selectedValue);
     }
 
     session.configOptions = session.configOptions.map((o) =>
-      o.id === params.configId ? { ...o, currentValue: params.value } : o,
+      o.id === params.configId && o.type === "select" ? { ...o, currentValue: selectedValue } : o,
     );
 
     return { configOptions: session.configOptions };
@@ -1151,7 +1176,7 @@ export class ClaudeAcpAgent implements Agent {
     if (!session) return;
 
     session.configOptions = session.configOptions.map((o) =>
-      o.id === configId ? { ...o, currentValue: value } : o,
+      o.id === configId && o.type === "select" ? { ...o, currentValue: value } : o,
     );
 
     await this.client.sessionUpdate({
@@ -1235,7 +1260,9 @@ export class ClaudeAcpAgent implements Agent {
 
     // Extract options from _meta if provided
     const userProvidedOptions = (params._meta as NewSessionMeta | undefined)?.claudeCode?.options;
-    const userProvidedOptionsWithConfig = userProvidedOptions as ClaudeCodeOptionsWithConfig | undefined;
+    const userProvidedOptionsWithConfig = userProvidedOptions as
+      | ClaudeCodeOptionsWithConfig
+      | undefined;
 
     // Configure thinking tokens from environment variable
     const maxThinkingTokens = process.env.MAX_THINKING_TOKENS
@@ -1251,7 +1278,9 @@ export class ClaudeAcpAgent implements Agent {
     // backward compatibility but callers should prefer the tools array.
     const tools: Options["tools"] =
       userProvidedOptions?.tools ??
-      (params._meta?.disableBuiltInTools === true ? [] : { type: "preset", preset: "claude_code" });
+      (params._meta?.disableBuiltInTools === true
+        ? []
+        : (this.defaultTools ?? { type: "preset", preset: "claude_code" }));
 
     const options: ClaudeCodeOptionsWithConfig = {
       systemPrompt,
@@ -2019,6 +2048,14 @@ export function streamEventToAcpNotifications(
 }
 
 export function runAcp() {
+  process.stdout.on("error", (error) => {
+    if ((error as Error & { code?: string }).code === "EPIPE") {
+      process.exit(0);
+    }
+
+    throw error;
+  });
+
   const input = nodeToWebWritable(process.stdout);
   const output = nodeToWebReadable(process.stdin);
 

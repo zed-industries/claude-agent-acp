@@ -4,6 +4,7 @@ export {
   runAcp,
   toAcpNotifications,
   streamEventToAcpNotifications,
+  type ClaudeAcpAgentOptions,
   type ToolUpdateMeta,
   type NewSessionMeta,
 } from "./acp-agent.js";

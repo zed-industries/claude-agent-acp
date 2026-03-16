@@ -255,6 +255,62 @@ describe("createSession options merging", () => {
     expect(capturedOptions!.tools).toEqual([]);
   });
 
+  it("uses constructor defaultTools when session tools are not provided", async () => {
+    agent = new ClaudeAcpAgent(createMockClient(), {
+      defaultTools: ["Bash", "Read", "Glob", "Grep", "WebSearch", "WebFetch"],
+    });
+
+    await agent.newSession({
+      cwd: "/test",
+      mcpServers: [],
+    });
+
+    expect(capturedOptions!.tools).toEqual([
+      "Bash",
+      "Read",
+      "Glob",
+      "Grep",
+      "WebSearch",
+      "WebFetch",
+    ]);
+  });
+
+  it("lets disableBuiltInTools override constructor defaultTools", async () => {
+    agent = new ClaudeAcpAgent(createMockClient(), {
+      defaultTools: ["Bash", "Read", "Glob", "Grep", "WebSearch", "WebFetch"],
+    });
+
+    await agent.newSession({
+      cwd: "/test",
+      mcpServers: [],
+      _meta: {
+        disableBuiltInTools: true,
+      },
+    });
+
+    expect(capturedOptions!.tools).toEqual([]);
+  });
+
+  it("lets session tools override constructor defaultTools", async () => {
+    agent = new ClaudeAcpAgent(createMockClient(), {
+      defaultTools: ["Bash", "Read", "Glob", "Grep", "WebSearch", "WebFetch"],
+    });
+
+    await agent.newSession({
+      cwd: "/test",
+      mcpServers: [],
+      _meta: {
+        claudeCode: {
+          options: {
+            tools: ["Bash", "Read"],
+          },
+        },
+      },
+    });
+
+    expect(capturedOptions!.tools).toEqual(["Bash", "Read"]);
+  });
+
   it("merges user-provided mcpServers with ACP mcpServers", async () => {
     await agent.newSession({
       cwd: "/test",

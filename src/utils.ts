@@ -6,6 +6,8 @@ import { readFileSync } from "node:fs";
 import { Logger } from "./acp-agent.js";
 import { ClaudeCodeSettings, getManagedSettingsPath } from "./settings.js";
 
+type NodeWriteError = Error & { code?: string };
+
 // Useful for bridging push-based and async-iterator-based code.
 export class Pushable<T> implements AsyncIterable<T> {
   private queue: T[] = [];
@@ -47,17 +49,54 @@ export class Pushable<T> implements AsyncIterable<T> {
   }
 }
 
+function isBrokenPipeError(error: unknown): error is NodeWriteError {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    (error as NodeWriteError).code === "EPIPE"
+  );
+}
+
 // Helper to convert Node.js streams to Web Streams
 export function nodeToWebWritable(nodeStream: Writable): WritableStream<Uint8Array> {
+  let terminalError: Error | null = null;
+  let brokenPipe = false;
+
+  nodeStream.on("error", (error) => {
+    if (isBrokenPipeError(error)) {
+      brokenPipe = true;
+      return;
+    }
+
+    terminalError = error;
+  });
+
   return new WritableStream<Uint8Array>({
     write(chunk) {
+      if (brokenPipe) {
+        return Promise.resolve();
+      }
+
+      if (terminalError) {
+        return Promise.reject(terminalError);
+      }
+
       return new Promise<void>((resolve, reject) => {
         nodeStream.write(Buffer.from(chunk), (err) => {
-          if (err) {
-            reject(err);
-          } else {
+          if (!err) {
             resolve();
+            return;
           }
+
+          if (isBrokenPipeError(err)) {
+            brokenPipe = true;
+            resolve();
+            return;
+          }
+
+          terminalError = err;
+          reject(err);
         });
       });
     },
