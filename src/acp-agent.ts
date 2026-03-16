@@ -1020,7 +1020,6 @@ export class ClaudeAcpAgent implements Agent {
         return {
           behavior: "deny",
           message: "Session not found",
-          interrupt: true,
         };
       }
 
@@ -1086,7 +1085,6 @@ export class ClaudeAcpAgent implements Agent {
           return {
             behavior: "deny",
             message: "User rejected request to exit plan mode.",
-            interrupt: true,
           };
         }
       }
@@ -1152,7 +1150,6 @@ export class ClaudeAcpAgent implements Agent {
         return {
           behavior: "deny",
           message: "User refused permission to run tool",
-          interrupt: true,
         };
       }
     };
