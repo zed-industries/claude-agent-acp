@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.22.1
+
+- Fix: invalid auth required state in gateway mode
+
 ## 0.22.0
 
 - Use stable list sessions method (#429)
