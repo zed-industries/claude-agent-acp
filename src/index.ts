@@ -26,6 +26,10 @@ if (process.argv.includes("--cli")) {
 
   runAcp();
 
-  // Keep process alive
+  // Keep process alive — wait for stdin to end (matches opencode pattern)
   process.stdin.resume();
+  await new Promise((resolve, reject) => {
+    process.stdin.on("end", resolve);
+    process.stdin.on("error", reject);
+  });
 }
