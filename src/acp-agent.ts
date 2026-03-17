@@ -708,13 +708,17 @@ export class ClaudeAcpAgent implements Agent {
             // Slash commands like /compact can generate invalid output... doesn't match
             // their own docs: https://docs.anthropic.com/en/docs/claude-code/sdk/sdk-slash-commands#%2Fcompact-compact-conversation-history
             if (
-              typeof message.message.content === "string" &&
-              message.message.content.includes("<local-command-stdout>")
+              "model" in message.message &&
+              message.message.model === "<synthetic>" &&
+              Array.isArray(message.message.content) &&
+              message.message.content.length === 1 &&
+              message.message.content[0].type === "text"
             ) {
+              promptReplayed = true;
               // Handle /context by sending its reply as regular agent message.
-              if (message.message.content.includes("Context Usage")) {
+              if (message.message.content[0].text.includes("Context Usage")) {
                 for (const notification of toAcpNotifications(
-                  message.message.content
+                  message.message.content[0].text
                     .replace("<local-command-stdout>", "")
                     .replace("</local-command-stdout>", ""),
                   "assistant",
