@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.22.2
+
+- Add experimental meta param for testing additional directories
+
 ## 0.22.1
 
 - Fix: invalid auth required state in gateway mode
