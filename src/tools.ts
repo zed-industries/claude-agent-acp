@@ -372,10 +372,9 @@ export function toolInfoFromToolUse(
       return {
         title: "Ready to code?",
         kind: "switch_mode",
-        content:
-          planInput?.plan
-            ? [{ type: "content" as const, content: { type: "text" as const, text: planInput.plan } }]
-            : [],
+        content: planInput?.plan
+          ? [{ type: "content" as const, content: { type: "text" as const, text: planInput.plan } }]
+          : [],
       };
     }
 
