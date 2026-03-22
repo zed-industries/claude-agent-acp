@@ -275,6 +275,7 @@ export class ClaudeAcpAgent implements Agent {
   clientCapabilities?: ClientCapabilities;
   logger: Logger;
   gatewayAuthMeta?: GatewayAuthMeta;
+  workspaceCwd?: string;
 
   constructor(client: AgentSideConnection, logger?: Logger) {
     this.sessions = {};
@@ -369,6 +370,10 @@ export class ClaudeAcpAgent implements Agent {
       throw RequestError.authRequired();
     }
 
+    if (params.cwd && !this.workspaceCwd) {
+      this.workspaceCwd = params.cwd;
+    }
+
     const response = await this.createSession(params, {
       // Revisit these meta values once we support resume
       resume: (params._meta as NewSessionMeta | undefined)?.claudeCode?.options?.resume,
@@ -423,7 +428,8 @@ export class ClaudeAcpAgent implements Agent {
   }
 
   async listSessions(params: ListSessionsRequest): Promise<ListSessionsResponse> {
-    const sdk_sessions = await listSessions({ dir: params.cwd ?? undefined });
+    const cwd = params.cwd ?? this.workspaceCwd;
+    const sdk_sessions = await listSessions({ dir: cwd });
     const sessions = [];
 
     for (const session of sdk_sessions) {
