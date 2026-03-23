@@ -1336,7 +1336,7 @@ describe("stop reason propagation", () => {
         currentModelId: "default",
         availableModels: [],
       },
-      settingsManager: {} as any,
+      settingsManager: { dispose: vi.fn() } as any,
       accumulatedUsage: {
         inputTokens: 0,
         outputTokens: 0,
@@ -1470,7 +1470,7 @@ describe("stop reason propagation", () => {
         currentModelId: "default",
         availableModels: [],
       },
-      settingsManager: {} as any,
+      settingsManager: { dispose: vi.fn() } as any,
       accumulatedUsage: {
         inputTokens: 0,
         outputTokens: 0,
@@ -1543,7 +1543,7 @@ describe("session/close", () => {
         currentModelId: "default",
         availableModels: [],
       },
-      settingsManager: {} as any,
+      settingsManager: { dispose: vi.fn() } as any,
       accumulatedUsage: {
         inputTokens: 0,
         outputTokens: 0,
@@ -1570,6 +1570,7 @@ describe("session/close", () => {
     expect(result).toEqual({});
     expect(agent.sessions["session-1"]).toBeUndefined();
     expect(session.query.interrupt).toHaveBeenCalled();
+    expect(session.settingsManager.dispose).toHaveBeenCalled();
   });
 
   it("should abort the session's abort controller", async () => {

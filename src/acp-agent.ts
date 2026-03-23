@@ -811,6 +811,7 @@ export class ClaudeAcpAgent implements Agent {
         message.includes("Failed to write to process stdin")
       ) {
         this.logger.error(`Session ${params.sessionId}: Claude Agent process died: ${message}`);
+        session.settingsManager.dispose();
         session.input.end();
         delete this.sessions[params.sessionId];
         throw RequestError.internalError(
@@ -858,6 +859,7 @@ export class ClaudeAcpAgent implements Agent {
     }
     await this.cancel({ sessionId: params.sessionId });
 
+    session.settingsManager.dispose();
     session.abortController.abort();
     delete this.sessions[params.sessionId];
 
