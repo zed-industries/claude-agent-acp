@@ -1417,7 +1417,7 @@ export class ClaudeAcpAgent implements Agent {
     if (
       shouldHideClaudeAuth() &&
       initializationResult.account.subscriptionType &&
-      this.gatewayAuthMeta === null
+      !this.gatewayAuthMeta
     ) {
       throw RequestError.authRequired(
         undefined,
