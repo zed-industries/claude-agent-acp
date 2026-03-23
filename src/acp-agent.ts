@@ -586,16 +586,20 @@ export class ClaudeAcpAgent implements Agent {
               });
             }
 
+            // Check cancelled before promptReplayed — when a cancel races
+            // with the first result, promptReplayed is still false and the
+            // result would be consumed as a background task, blocking the
+            // loop forever (see #442).
+            if (session.cancelled) {
+              return { stopReason: "cancelled" };
+            }
+
             if (!promptReplayed) {
               // This result is from a background task that finished after
               // the previous prompt loop ended. Consume it and continue
               // waiting for our own prompt's result.
               this.logger.log(`Session ${params.sessionId}: consuming background task result`);
               break;
-            }
-
-            if (session.cancelled) {
-              return { stopReason: "cancelled" };
             }
 
             // Build the usage response
