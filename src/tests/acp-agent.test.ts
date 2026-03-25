@@ -1407,6 +1407,7 @@ describe("stop reason propagation", () => {
     const agent = createMockAgent();
     injectSession(agent, [
       createResultMessage({ subtype: "success", stop_reason: null, is_error: false }),
+      { type: "system", subtype: "session_state_changed", state: "idle" },
     ]);
 
     const response = await agent.prompt({
@@ -1455,6 +1456,7 @@ describe("stop reason propagation", () => {
 
       // Then the prompt's own result
       yield promptResult;
+      yield { type: "system", subtype: "session_state_changed", state: "idle" };
     }
 
     agent.sessions["test-session"] = {
