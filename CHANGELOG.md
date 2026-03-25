@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.23.0
+
+- Use idle session state as end of turn (#463)
+- Update claude-agent-sdk to 0.2.83 (#462)
+- Fix handling of local-only slash commands (#432)
+- fix: correct null check for gatewayAuthMeta in subscription validation (#455)
+- fix: include both stdout and stderr in Bash tool output (#456)
+- fix: prevent prompt loop hang when cancel races with first result (#458)
+- fix: dispose SettingsManager on session close to prevent resource leaks (#454)
+- fix: restore plan content in ExitPlanMode tool call (#451)
+
 ## 0.22.2
 
 - Add experimental meta param for testing additional directories
