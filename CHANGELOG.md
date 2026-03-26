@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.24.1](https://github.com/agentclientprotocol/claude-agent-acp/compare/v0.24.0...v0.24.1) (2026-03-26)
+
+
+### Bug Fixes
+
+* Cleanup based on new idle state [#463](https://github.com/agentclientprotocol/claude-agent-acp/issues/463) ([#480](https://github.com/agentclientprotocol/claude-agent-acp/issues/480)) ([23b3073](https://github.com/agentclientprotocol/claude-agent-acp/commit/23b30730253752f0bc4e30b619a6236f16fafdb9))
+
 ## 0.24.0
 
 Rename from `@zed-industries/claude-agent-acp` to `@agentclientprotocol/claude-agent-acp`.
