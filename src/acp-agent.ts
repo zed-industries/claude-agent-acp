@@ -1735,10 +1735,10 @@ export function promptToClaude(prompt: PromptRequest): SDKUserMessage {
       case "text": {
         let text = chunk.text;
         // change /mcp:server:command args -> /server:command (MCP) args
-        const mcpMatch = text.match(/^\/mcp:([^:\s]+):(\S+)(\s+.*)?$/);
+        const mcpMatch = text.match(/^\/mcp:([^:\s]+):(\S+)(?:\s(.*))?$/);
         if (mcpMatch) {
           const [, server, command, args] = mcpMatch;
-          text = `/${server}:${command} (MCP)${args || ""}`;
+          text = `/${server}:${command} (MCP)${args ? ` ${args}` : ""}`;
         }
         content.push({ type: "text", text });
         break;
