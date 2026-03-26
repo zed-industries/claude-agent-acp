@@ -83,7 +83,9 @@ export class SettingsManager {
   private onChange?: () => void;
   private logger: { log: (...args: any[]) => void; error: (...args: any[]) => void };
   private initialized = false;
+  private disposed = false;
   private debounceTimer: ReturnType<typeof setTimeout> | null = null;
+  private initPromise: Promise<void> | null = null;
 
   constructor(cwd: string, options?: SettingsManagerOptions) {
     this.cwd = cwd;
@@ -98,10 +100,19 @@ export class SettingsManager {
     if (this.initialized) {
       return;
     }
+    if (this.initPromise) {
+      return this.initPromise;
+    }
 
-    await this.loadAllSettings();
-    this.setupWatchers();
-    this.initialized = true;
+    this.disposed = false;
+    this.initPromise = this.loadAllSettings().then(() => {
+      if (!this.disposed) {
+        this.setupWatchers();
+        this.initialized = true;
+      }
+      this.initPromise = null;
+    });
+    return this.initPromise;
   }
 
   /**
@@ -226,9 +237,14 @@ export class SettingsManager {
 
     this.debounceTimer = setTimeout(async () => {
       this.debounceTimer = null;
+      if (this.disposed) {
+        return;
+      }
       try {
         await this.loadAllSettings();
-        this.onChange?.();
+        if (!this.disposed) {
+          this.onChange?.();
+        }
       } catch (error) {
         this.logger.error("Failed to reload settings:", error);
       }
@@ -259,7 +275,6 @@ export class SettingsManager {
 
     this.dispose();
     this.cwd = cwd;
-    this.initialized = false;
     await this.initialize();
   }
 
@@ -267,6 +282,10 @@ export class SettingsManager {
    * Disposes of file watchers and cleans up resources
    */
   dispose(): void {
+    this.disposed = true;
+    this.initialized = false;
+    this.initPromise = null;
+
     if (this.debounceTimer) {
       clearTimeout(this.debounceTimer);
       this.debounceTimer = null;
@@ -276,6 +295,5 @@ export class SettingsManager {
       watcher.close();
     }
     this.watchers = [];
-    this.initialized = false;
   }
 }
