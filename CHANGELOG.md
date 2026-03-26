@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.23.1
+
+- Add back error_during_execution break point (#469)
+
 ## 0.23.0
 
 - Use idle session state as end of turn (#463)
