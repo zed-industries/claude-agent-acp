@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.24.0
+
+Rename from `@zed-industries/claude-agent-acp` to `@agentclientprotocol/claude-agent-acp`.
+
+We are moving this to the main ACP org to better allow multiple teams to contribute and maintain this adapter.
+
 ## 0.23.1
 
 - Add back error_during_execution break point (#469)
