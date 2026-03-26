@@ -40,6 +40,7 @@ import {
   TerminalOutputResponse,
   WriteTextFileRequest,
   WriteTextFileResponse,
+  StopReason,
 } from "@agentclientprotocol/sdk";
 import {
   CanUseTool,
@@ -473,17 +474,12 @@ export class ClaudeAcpAgent implements Agent {
     const promptUuid = randomUUID();
     userMessage.uuid = promptUuid;
 
-    let promptReplayed = false;
-
     // These local-only commands return a result without replaying the user
     // message. Mark promptReplayed=true so their result isn't consumed as a
     // background task result.
     const firstText = params.prompt[0]?.type === "text" ? params.prompt[0].text : "";
     const isLocalOnlyCommand =
       firstText.startsWith("/") && LOCAL_ONLY_COMMANDS.has(firstText.split(" ", 1)[0]);
-    if (isLocalOnlyCommand) {
-      promptReplayed = true;
-    }
 
     if (session.promptRunning) {
       session.input.push(userMessage);
@@ -494,15 +490,13 @@ export class ClaudeAcpAgent implements Agent {
       if (cancelled) {
         return { stopReason: "cancelled" };
       }
-      // The replay resolved the promise, mark in this loop too,
-      // so we don't treat the next result as a background task's result.
-      promptReplayed = true;
     } else {
       session.input.push(userMessage);
     }
 
     session.promptRunning = true;
     let handedOff = false;
+    let stopReason: StopReason = "end_turn";
 
     try {
       while (true) {
@@ -543,7 +537,6 @@ export class ClaudeAcpAgent implements Agent {
                     content: { type: "text", text: "\n\nCompacting completed." },
                   },
                 });
-                promptReplayed = true;
                 break;
               }
               case "local_command_output": {
@@ -554,12 +547,11 @@ export class ClaudeAcpAgent implements Agent {
                     content: { type: "text", text: message.content },
                   },
                 });
-                promptReplayed = true;
                 break;
               }
               case "session_state_changed": {
                 if (message.state === "idle") {
-                  return { stopReason: "end_turn", usage: sessionUsage(session) };
+                  return { stopReason, usage: sessionUsage(session) };
                 }
                 break;
               }
@@ -607,24 +599,10 @@ export class ClaudeAcpAgent implements Agent {
               });
             }
 
-            // Check cancelled before promptReplayed — when a cancel races
-            // with the first result, promptReplayed is still false and the
-            // result would be consumed as a background task, blocking the
-            // loop forever (see #442).
             if (session.cancelled) {
-              return { stopReason: "cancelled" };
-            }
-
-            if (!promptReplayed) {
-              // This result is from a background task that finished after
-              // the previous prompt loop ended. Consume it and continue
-              // waiting for our own prompt's result.
-              this.logger.log(`Session ${params.sessionId}: consuming background task result`);
+              stopReason = "cancelled";
               break;
             }
-
-            // Build the usage response
-            const usage = sessionUsage(session);
 
             switch (message.subtype) {
               case "success": {
@@ -632,7 +610,8 @@ export class ClaudeAcpAgent implements Agent {
                   throw RequestError.authRequired();
                 }
                 if (message.stop_reason === "max_tokens") {
-                  return { stopReason: "max_tokens", usage };
+                  stopReason = "max_tokens";
+                  break;
                 }
                 if (message.is_error) {
                   throw RequestError.internalError(undefined, message.result);
@@ -655,7 +634,8 @@ export class ClaudeAcpAgent implements Agent {
               }
               case "error_during_execution": {
                 if (message.stop_reason === "max_tokens") {
-                  return { stopReason: "max_tokens", usage };
+                  stopReason = "max_tokens";
+                  break;
                 }
                 if (message.is_error) {
                   throw RequestError.internalError(
@@ -663,7 +643,8 @@ export class ClaudeAcpAgent implements Agent {
                     message.errors.join(", ") || message.subtype,
                   );
                 }
-                return { stopReason: "end_turn", usage: sessionUsage(session) };
+                stopReason = "end_turn";
+                break;
               }
               case "error_max_budget_usd":
               case "error_max_turns":
@@ -674,7 +655,8 @@ export class ClaudeAcpAgent implements Agent {
                     message.errors.join(", ") || message.subtype,
                   );
                 }
-                return { stopReason: "max_turn_requests", usage };
+                stopReason = "max_turn_requests";
+                break;
               default:
                 unreachable(message, this.logger);
                 break;
@@ -706,9 +688,6 @@ export class ClaudeAcpAgent implements Agent {
             // Check for prompt replay
             if (message.type === "user" && "uuid" in message && message.uuid) {
               if (message.uuid === promptUuid) {
-                // Our own prompt was replayed back — we're now processing
-                // our prompt's response (not a background task's).
-                promptReplayed = true;
                 break;
               }
 
