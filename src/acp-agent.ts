@@ -1326,6 +1326,7 @@ export class ClaudeAcpAgent implements Agent {
       ...userProvidedOptions,
       env: {
         ...process.env,
+        CLAUDECODE: "", // Prevent nested-session detection when spawned from within Claude Code
         ...userProvidedOptions?.env,
         ...createEnvForGateway(this.gatewayAuthMeta),
         // Opt-in to session state events like when the agent is idle
@@ -1405,11 +1406,19 @@ export class ClaudeAcpAgent implements Agent {
       initializationResult = await q.initializationResult();
     } catch (error) {
       if (
-        creationOpts.resume &&
         error instanceof Error &&
         error.message === "Query closed before response received"
       ) {
-        throw RequestError.resourceNotFound(sessionId);
+        if (creationOpts.resume) {
+          throw RequestError.resourceNotFound(sessionId);
+        }
+        // For new sessions, provide a meaningful error instead of generic "Internal error"
+        throw RequestError.internalError(
+          undefined,
+          "Claude Code process exited before initialization completed. " +
+            "Ensure Claude Code is installed and accessible. " +
+            "You can set CLAUDE_CODE_EXECUTABLE to the path of the Claude CLI.",
+        );
       }
       throw error;
     }
