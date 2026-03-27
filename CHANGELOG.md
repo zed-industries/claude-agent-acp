@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.24.2](https://github.com/agentclientprotocol/claude-agent-acp/compare/v0.24.1...v0.24.2) (2026-03-27)
+
+
+### Bug Fixes
+
+* Add explicit type checks for MCP servers (http/sse) ([#487](https://github.com/agentclientprotocol/claude-agent-acp/issues/487)) ([e00a439](https://github.com/agentclientprotocol/claude-agent-acp/commit/e00a43901fa2b4fd7d582e1de57277be88233007))
+
 ## [0.24.1](https://github.com/agentclientprotocol/claude-agent-acp/compare/v0.24.0...v0.24.1) (2026-03-26)
 
 
