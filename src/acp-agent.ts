@@ -1425,7 +1425,7 @@ export class ClaudeAcpAgent implements Agent {
       );
     }
 
-    const models = await getAvailableModels(q, initializationResult.models, settingsManager);
+    const models = await getAvailableModels(q, initializationResult.models, settingsManager, options.model);
 
     const availableModes = [
       {
@@ -1633,6 +1633,7 @@ async function getAvailableModels(
   query: Query,
   models: ModelInfo[],
   settingsManager: SettingsManager,
+  optionsModel?: string,
 ): Promise<SessionModelState> {
   const settings = settingsManager.getSettings();
 
@@ -1645,7 +1646,18 @@ async function getAvailableModels(
     }
   }
 
-  await query.setModel(currentModel.value);
+  if (optionsModel) {
+    // Model was already passed via query Options at CLI startup time.
+    // Resolve it against available models for currentModelId, but skip
+    // setModel() to avoid triggering a /model command that leaks into
+    // the event stream.
+    const match = resolveModelPreference(models, optionsModel);
+    if (match) {
+      currentModel = match;
+    }
+  } else {
+    await query.setModel(currentModel.value);
+  }
 
   return {
     availableModels: models.map((model) => ({
