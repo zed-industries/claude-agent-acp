@@ -597,21 +597,9 @@ export class ClaudeAcpAgent implements Agent {
             session.accumulatedUsage.cachedReadTokens += message.usage.cache_read_input_tokens;
             session.accumulatedUsage.cachedWriteTokens += message.usage.cache_creation_input_tokens;
 
-            // Calculate context window size from the current model's usage.
-            // The modelUsage keys may use the requested model alias (e.g. "claude-opus-4-6")
-            // while message.model on assistant messages has the resolved API response model
-            // (e.g. "claude-opus-4-6-20250514"), so we fall back to prefix matching.
-            const currentModel = lastAssistantModel;
-            const matchingModelUsage = currentModel
-              ? (message.modelUsage[currentModel] ??
-                Object.entries(message.modelUsage)
-                  .filter(([key]) => currentModel.startsWith(key) || key.startsWith(currentModel))
-                  .sort((a, b) => b[0].length - a[0].length)[0]?.[1])
-              : undefined;
-            // Fallback to 200k: this is hit when lastAssistantModel is null (e.g. the
-            // assistant message lacked a model field) or no modelUsage key matches.
-            // 200k is a conservative default — the Anthropic API should always populate
-            // BetaMessage.model, so this path is unlikely in practice.
+            const matchingModelUsage = lastAssistantModel
+              ? getMatchingModelUsage(message.modelUsage, lastAssistantModel)
+              : null;
             const contextWindowSize = matchingModelUsage?.contextWindow ?? 200000;
             lastContextWindowSize = contextWindowSize;
 
@@ -2155,4 +2143,29 @@ export function runAcp() {
 
   const stream = ndJsonStream(input, output);
   new AgentSideConnection((client) => new ClaudeAcpAgent(client), stream);
+}
+
+function commonPrefixLength(a: string, b: string) {
+  let i = 0;
+  while (i < a.length && i < b.length && a[i] === b[i]) {
+    i++;
+  }
+  return i;
+}
+
+function getMatchingModelUsage(modelUsage: Record<string, ModelUsage>, currentModel: string) {
+  let bestKey: string | null = null;
+  let bestLen = 0;
+
+  for (const key of Object.keys(modelUsage)) {
+    const len = commonPrefixLength(key, currentModel);
+    if (len > bestLen) {
+      bestLen = len;
+      bestKey = key;
+    }
+  }
+
+  if (bestKey) {
+    return modelUsage[bestKey];
+  }
 }
