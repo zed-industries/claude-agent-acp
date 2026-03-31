@@ -1348,6 +1348,7 @@ describe("stop reason propagation", () => {
       pendingMessages: new Map(),
       nextPendingOrder: 0,
       abortController: new AbortController(),
+      useSessionStateEvents: true,
     };
   }
 
@@ -1483,6 +1484,7 @@ describe("stop reason propagation", () => {
         cachedWriteTokens: 0,
       },
       abortController: new AbortController(),
+      useSessionStateEvents: true,
       configOptions: [],
       promptRunning: false,
       pendingMessages: new Map(),
@@ -1560,6 +1562,7 @@ describe("session/close", () => {
       pendingMessages: new Map(),
       nextPendingOrder: 0,
       abortController: new AbortController(),
+      useSessionStateEvents: true,
     };
     return agent.sessions[sessionId]!;
   }
@@ -1730,6 +1733,7 @@ describe("usage_update computation", () => {
       pendingMessages: new Map(),
       nextPendingOrder: 0,
       abortController: new AbortController(),
+      useSessionStateEvents: true,
     };
   }
 

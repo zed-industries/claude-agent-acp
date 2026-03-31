@@ -123,6 +123,7 @@ type Session = {
   pendingMessages: Map<string, { resolve: (cancelled: boolean) => void; order: number }>;
   nextPendingOrder: number;
   abortController: AbortController;
+  useSessionStateEvents: boolean;
 };
 
 type BackgroundTerminal =
@@ -681,6 +682,12 @@ export class ClaudeAcpAgent implements Agent {
               default:
                 unreachable(message, this.logger);
                 break;
+            }
+            // When session state events are disabled (CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS=0),
+            // session_state_changed(idle) will never arrive. Return immediately
+            // using the stopReason set by the result subtype above.
+            if (!session.useSessionStateEvents) {
+              return { stopReason, usage: sessionUsage(session) };
             }
             break;
           }
@@ -1364,8 +1371,11 @@ export class ClaudeAcpAgent implements Agent {
         ...process.env,
         ...userProvidedOptions?.env,
         ...createEnvForGateway(this.gatewayAuthMeta),
-        // Opt-in to session state events like when the agent is idle
-        CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS: "1",
+        // Allow users to opt out of session state events by setting
+        // CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS=0 in their environment,
+        // e.g. when the Claude Code binary does not support this feature.
+        CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS:
+          process.env.CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS ?? "1",
       },
       // Override certain fields that must be controlled by ACP
       cwd: params.cwd,
@@ -1520,6 +1530,8 @@ export class ClaudeAcpAgent implements Agent {
       pendingMessages: new Map(),
       nextPendingOrder: 0,
       abortController,
+      useSessionStateEvents:
+        (process.env.CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS ?? "1") !== "0",
     };
 
     return {
