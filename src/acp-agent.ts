@@ -40,7 +40,6 @@ import {
   TerminalOutputResponse,
   WriteTextFileRequest,
   WriteTextFileResponse,
-  StopReason,
 } from "@agentclientprotocol/sdk";
 import {
   CanUseTool,
@@ -62,6 +61,7 @@ import { ContentBlockParam } from "@anthropic-ai/sdk/resources";
 import { BetaContentBlock, BetaRawContentBlockDelta } from "@anthropic-ai/sdk/resources/beta.mjs";
 import { randomUUID } from "node:crypto";
 import * as fs from "node:fs";
+import * as fsp from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 import packageJson from "../package.json" with { type: "json" };
@@ -294,7 +294,9 @@ export class ClaudeAcpAgent implements Agent {
 
     // Bypasses standard auth by routing requests through a custom Anthropic-protocol gateway.
     // Only offered when the client advertises `auth._meta.gateway` capability.
-    const supportsGatewayAuth = request.clientCapabilities?.auth?._meta?.gateway === true;
+    // auth is an ACP extension not yet in the ClientCapabilities type
+    const caps = request.clientCapabilities as any;
+    const supportsGatewayAuth = caps?.auth?._meta?.gateway === true;
 
     const gatewayAuthMethod: AuthMethod = {
       id: "gateway",
@@ -314,7 +316,7 @@ export class ClaudeAcpAgent implements Agent {
       type: "terminal",
       args: ["--cli"],
     };
-    const supportsTerminalAuth = request.clientCapabilities?.auth?.terminal === true;
+    const supportsTerminalAuth = caps?.auth?.terminal === true;
 
     // If client supports terminal-auth capability, use that instead.
     const supportsMetaTerminalAuth = request.clientCapabilities?._meta?.["terminal-auth"] === true;
@@ -484,6 +486,15 @@ export class ClaudeAcpAgent implements Agent {
     const isLocalOnlyCommand =
       firstText.startsWith("/") && LOCAL_ONLY_COMMANDS.has(firstText.split(" ", 1)[0]);
 
+    // backgroundInitPending tracks whether a system "init" message arrived
+    // without any subsequent activity (stream_event, assistant, or system
+    // messages that indicate real processing). A background task that
+    // completed after the previous prompt loop ended produces
+    // init → result with nothing in between. Our own prompt's processing
+    // always generates stream_event / assistant messages before its result,
+    // so the flag gets cleared before we see the result.
+    let backgroundInitPending = false;
+
     if (session.promptRunning) {
       session.input.push(userMessage);
       const order = session.nextPendingOrder++;
@@ -499,7 +510,26 @@ export class ClaudeAcpAgent implements Agent {
 
     session.promptRunning = true;
     let handedOff = false;
-    let stopReason: StopReason = "end_turn";
+    let stopReason: "end_turn" | "max_tokens" | "cancelled" = "end_turn";
+    // Saved prompt response when consuming internal turns from background
+    // task completions. See the "success" result handler below.
+    let savedPromptResponse: PromptResponse | undefined;
+    // Track background task IDs from system/task_started messages.
+    // Resolved when we see system/task_notification with a terminal status.
+    // Used to decide whether to poll for internal turns after a result.
+    const pendingTaskIds = new Map<
+      string,
+      {
+        outputPath: string | null;
+        taskType: string;
+        toolUseId: string | null;
+        firstSeenAt: number;
+        lastActivityAt: number;
+      }
+    >();
+    // Cache output paths parsed from terminal_output before task_started arrives.
+    // The SDK may emit terminal_output before task_started depending on ordering.
+    const earlyOutputPaths = new Map<string, string>();
 
     try {
       while (true) {
@@ -516,6 +546,10 @@ export class ClaudeAcpAgent implements Agent {
           case "system":
             switch (message.subtype) {
               case "init":
+                // A new processing cycle started. If this is a
+                // background task, its result will follow immediately
+                // without intervening stream_event / assistant messages.
+                backgroundInitPending = true;
                 break;
               case "status": {
                 if (message.status === "compacting") {
@@ -557,6 +591,7 @@ export class ClaudeAcpAgent implements Agent {
                     content: { type: "text", text: "\n\nCompacting completed." },
                   },
                 });
+                backgroundInitPending = false;
                 break;
               }
               case "local_command_output": {
@@ -567,25 +602,56 @@ export class ClaudeAcpAgent implements Agent {
                     content: { type: "text", text: message.content },
                   },
                 });
-                break;
-              }
-              case "session_state_changed": {
-                if (message.state === "idle") {
-                  return { stopReason, usage: sessionUsage(session) };
-                }
+                backgroundInitPending = false;
                 break;
               }
               case "hook_started":
               case "hook_progress":
               case "hook_response":
               case "files_persisted":
-              case "task_started":
-              case "task_notification":
-              case "task_progress":
               case "elicitation_complete":
               case "api_retry":
                 // Todo: process via status api: https://docs.claude.com/en/docs/claude-code/hooks#hook-output
                 break;
+              case "task_started":
+                // Track background task IDs so we can detect when an
+                // internal turn (task_notification → assistant → result)
+                // may follow the user's result message. Only track
+                // local_bash tasks — the SDK already defers results for
+                // local_agent tasks (via its internal iP() check —
+                // minified name, likely hasRunningDeferrableTasks).
+                if (message.task_id && (message as any).task_type === "local_bash") {
+                  const earlyPath = earlyOutputPaths.get(message.task_id);
+                  const now = Date.now();
+                  pendingTaskIds.set(message.task_id, {
+                    outputPath: earlyPath ?? null,
+                    taskType: (message as any).task_type,
+                    toolUseId: (message as any).tool_use_id ?? null,
+                    firstSeenAt: now,
+                    lastActivityAt: now,
+                  });
+                  if (earlyPath) earlyOutputPaths.delete(message.task_id);
+                }
+                break;
+              case "task_notification": {
+                // Resolve the task ID when the SDK reports completion.
+                const status = (message as any).status;
+                if (
+                  message.task_id &&
+                  (status === "completed" || status === "failed" || status === "stopped")
+                ) {
+                  pendingTaskIds.delete(message.task_id);
+                }
+                break;
+              }
+              case "task_progress":
+                break;
+              case "session_state_changed": {
+                if (message.state === "idle") {
+                  return { stopReason, usage: sessionUsage(session) };
+                }
+                break;
+              }
               default:
                 unreachable(message, this.logger);
                 break;
@@ -621,9 +687,31 @@ export class ClaudeAcpAgent implements Agent {
             }
 
             if (session.cancelled) {
-              stopReason = "cancelled";
+              return { stopReason: "cancelled" };
+            }
+
+            if (backgroundInitPending) {
+              // This result immediately followed an init with no
+              // intervening activity — it belongs to a background task
+              // that finished after the previous prompt loop ended.
+              // Consume it and continue waiting for our own result.
+              this.logger.log(`Session ${params.sessionId}: consuming background task result`);
+              backgroundInitPending = false;
               break;
             }
+
+            // Build the usage response
+            const usage: PromptResponse["usage"] = {
+              inputTokens: session.accumulatedUsage.inputTokens,
+              outputTokens: session.accumulatedUsage.outputTokens,
+              cachedReadTokens: session.accumulatedUsage.cachedReadTokens,
+              cachedWriteTokens: session.accumulatedUsage.cachedWriteTokens,
+              totalTokens:
+                session.accumulatedUsage.inputTokens +
+                session.accumulatedUsage.outputTokens +
+                session.accumulatedUsage.cachedReadTokens +
+                session.accumulatedUsage.cachedWriteTokens,
+            };
 
             switch (message.subtype) {
               case "success": {
@@ -651,7 +739,129 @@ export class ClaudeAcpAgent implements Agent {
                     await this.client.sessionUpdate(notification);
                   }
                 }
-                break;
+
+                // Workaround: detect and consume SDK internal turns from
+                // background task completions before returning. The SDK defers
+                // result messages for running local_agent tasks but NOT for
+                // local_bash background tasks, so background Bash completions
+                // arrive after the result as: task_notification → assistant →
+                // result. See x.sdk-trace-bg-leak.ndjson for the observed
+                // message sequence.
+                //
+                // Strategy: keep the turn open indefinitely, polling until
+                // all background tasks resolve (task_notification arrives)
+                // or the user cancels. There is no inactivity timeout — the
+                // turn stays open to guarantee internal turns are consumed.
+                //
+                // Defense layers:
+                // 1. Only poll if we saw task_started during the turn
+                //    (pendingTaskIds tracks unresolved background tasks)
+                // 2. Each poll iteration scans the SDK internal queue
+                //    (inputStream.queue) for any buffered task_notification
+                // 3. Output file growth is tracked as a per-task heartbeat
+                // 4. Cancellation is checked each iteration
+                //
+                // This accesses SDK internals (not a public API). The SDK
+                // doesn't expose an idle/hasPending signal.
+                // See: x.codex-review-fix2.md, x.codex-review-fix3.md
+                if (0 < pendingTaskIds.size) {
+                  // Poll indefinitely for background task completion.
+                  // The SDK enqueues task_notification asynchronously after
+                  // the result; polling gives it time to land while also
+                  // monitoring output file growth as a per-task heartbeat.
+                  const POLL_INTERVAL_MS = 1_000;
+                  const PROGRESS_LOG_INTERVAL_MS = 30_000;
+                  let lastProgressLog = 0; // force immediate first log
+                  const fileSizes = new Map<string, number>();
+
+                  const formatTaskSummary = () => {
+                    const now = Date.now();
+                    const parts: string[] = [];
+                    for (const [taskId, entry] of pendingTaskIds) {
+                      const ref = entry.lastActivityAt ?? entry.firstSeenAt;
+                      const inactiveFor = Math.round((now - ref) / 1000);
+                      parts.push(
+                        `task_id=${taskId} task_type=${entry.taskType} ` +
+                          `tool_use_id=${entry.toolUseId ?? "unknown"} ` +
+                          `outputPath=${entry.outputPath ?? "unknown"} ` +
+                          `inactiveFor=${inactiveFor}s`,
+                      );
+                    }
+                    return (
+                      `[bg-task-poll] waiting for background tasks: ` +
+                      parts.join(", ") +
+                      ` — cancellation risks later prompt contamination`
+                    );
+                  };
+
+                  // Log immediately on entering the poll loop
+                  this.logger.log(formatTaskSummary());
+                  lastProgressLog = Date.now();
+
+                  while (0 < pendingTaskIds.size) {
+                    // Yield to event loop
+                    await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
+
+                    // Bail early if the session was cancelled during the wait
+                    if (session.cancelled) {
+                      return { stopReason: "cancelled" };
+                    }
+
+                    // Throttled progress log every PROGRESS_LOG_INTERVAL_MS
+                    const now = Date.now();
+                    if (PROGRESS_LOG_INTERVAL_MS <= now - lastProgressLog) {
+                      lastProgressLog = now;
+                      this.logger.log(formatTaskSummary());
+                    }
+
+                    // Check if task_notification arrived anywhere in the queue.
+                    // Other system messages (e.g., init) may be queued before it,
+                    // so scanning past queue[0] avoids sleeping until timeout.
+                    const queryInternal = session.query as any;
+                    const queueArr = queryInternal.inputStream?.queue;
+                    const hasTaskNotification =
+                      Array.isArray(queueArr) &&
+                      queueArr.some(
+                        (m: any) => m.type === "system" && m.subtype === "task_notification",
+                      );
+                    if (hasTaskNotification) {
+                      // Internal turn ready to consume — save response,
+                      // continue outer while loop
+                      savedPromptResponse = { stopReason: "end_turn", usage };
+                      break;
+                    }
+
+                    // Check output files for activity
+                    for (const [taskId, entry] of pendingTaskIds) {
+                      if (!entry.outputPath) continue;
+                      try {
+                        const stat = await fsp.stat(entry.outputPath);
+                        const prevSize = fileSizes.get(taskId) ?? -1;
+                        if (stat.size !== prevSize) {
+                          fileSizes.set(taskId, stat.size);
+                          entry.lastActivityAt = Date.now();
+                          this.logger.log(
+                            `[bg-task-poll] output activity — ` +
+                              `task_id=${taskId} size=${stat.size}`,
+                          );
+                        }
+                      } catch {
+                        // File may not exist yet — that's fine
+                      }
+                    }
+                  }
+
+                  // task_notification arrived — continue the outer while
+                  // loop to consume the internal turn
+                  if (savedPromptResponse) break;
+                }
+
+                // No pending tasks — return the response.
+                if (savedPromptResponse) {
+                  savedPromptResponse.usage = usage;
+                  return savedPromptResponse;
+                }
+                return { stopReason: "end_turn", usage };
               }
               case "error_during_execution": {
                 if (message.stop_reason === "max_tokens") {
@@ -664,7 +874,6 @@ export class ClaudeAcpAgent implements Agent {
                     message.errors.join(", ") || message.subtype,
                   );
                 }
-                stopReason = "end_turn";
                 break;
               }
               case "error_max_budget_usd":
@@ -676,7 +885,6 @@ export class ClaudeAcpAgent implements Agent {
                     message.errors.join(", ") || message.subtype,
                   );
                 }
-                stopReason = "max_turn_requests";
                 break;
               default:
                 unreachable(message, this.logger);
@@ -685,6 +893,9 @@ export class ClaudeAcpAgent implements Agent {
             break;
           }
           case "stream_event": {
+            // Stream events indicate active processing for our prompt,
+            // so clear any pending background init.
+            backgroundInitPending = false;
             for (const notification of streamEventToAcpNotifications(
               message,
               params.sessionId,
@@ -696,6 +907,27 @@ export class ClaudeAcpAgent implements Agent {
                 cwd: session.cwd,
               },
             )) {
+              // Extract background task output file path from terminal_output
+              // data. The SDK emits "Command running in background with ID: {id}.
+              // Output is being written to: {path}" as terminal output when a
+              // bash task starts in the background. The terminal_output may arrive
+              // before or after task_started, so we cache the path in
+              // earlyOutputPaths if the task isn't tracked yet.
+              const termData = (notification.update as any)?._meta?.terminal_output?.data;
+              if (typeof termData === "string") {
+                const bgMatch = termData.match(
+                  /Command running in background with ID: (\S+)\.\s*Output is being written to: (.+)$/,
+                );
+                if (bgMatch) {
+                  const [, taskId, outputPath] = bgMatch;
+                  const entry = pendingTaskIds.get(taskId);
+                  if (entry) {
+                    entry.outputPath = outputPath;
+                  } else {
+                    earlyOutputPaths.set(taskId, outputPath);
+                  }
+                }
+              }
               await this.client.sessionUpdate(notification);
             }
             break;
@@ -709,6 +941,9 @@ export class ClaudeAcpAgent implements Agent {
             // Check for prompt replay
             if (message.type === "user" && "uuid" in message && message.uuid) {
               if (message.uuid === promptUuid) {
+                // Our own prompt was replayed back — clear any pending
+                // background init since we're now processing our prompt.
+                backgroundInitPending = false;
                 break;
               }
 
@@ -726,6 +961,9 @@ export class ClaudeAcpAgent implements Agent {
                 break;
               }
             }
+
+            // Non-replay user/assistant messages indicate active processing.
+            backgroundInitPending = false;
 
             // Store latest assistant usage (excluding subagents)
             // Sum all token types as a proxy for post-turn context occupancy:
@@ -1916,34 +2154,38 @@ export function toAcpNotifications(
         } else {
           // Only register hooks on first encounter to avoid double-firing
           if (registerHooks && !alreadyCached) {
-            registerHookCallback(chunk.id, {
-              onPostToolUseHook: async (toolUseId, toolInput, toolResponse) => {
-                const toolUse = toolUseCache[toolUseId];
-                if (toolUse) {
-                  const editDiff =
-                    toolUse.name === "Edit" ? toolUpdateFromEditToolResponse(toolResponse) : {};
-                  const update: SessionNotification["update"] = {
-                    _meta: {
-                      claudeCode: {
-                        toolResponse,
-                        toolName: toolUse.name,
-                      },
-                    } satisfies ToolUpdateMeta,
-                    toolCallId: toolUseId,
-                    sessionUpdate: "tool_call_update",
-                    ...editDiff,
-                  };
-                  await client.sessionUpdate({
-                    sessionId,
-                    update,
-                  });
-                } else {
-                  logger.error(
-                    `[claude-agent-acp] Got a tool response for tool use that wasn't tracked: ${toolUseId}`,
-                  );
-                }
+            registerHookCallback(
+              chunk.id,
+              {
+                onPostToolUseHook: async (toolUseId, toolInput, toolResponse) => {
+                  const toolUse = toolUseCache[toolUseId];
+                  if (toolUse) {
+                    const editDiff =
+                      toolUse.name === "Edit" ? toolUpdateFromEditToolResponse(toolResponse) : {};
+                    const update: SessionNotification["update"] = {
+                      _meta: {
+                        claudeCode: {
+                          toolResponse,
+                          toolName: toolUse.name,
+                        },
+                      } satisfies ToolUpdateMeta,
+                      toolCallId: toolUseId,
+                      sessionUpdate: "tool_call_update",
+                      ...editDiff,
+                    };
+                    await client.sessionUpdate({
+                      sessionId,
+                      update,
+                    });
+                  } else {
+                    logger.error(
+                      `[claude-agent-acp] Got a tool response for tool use that wasn't tracked: ${toolUseId}`,
+                    );
+                  }
+                },
               },
-            });
+              logger,
+            );
           }
 
           let rawInput;
