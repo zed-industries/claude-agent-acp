@@ -1337,6 +1337,8 @@ describe("stop reason propagation", () => {
         availableModels: [],
       },
       settingsManager: { dispose: vi.fn() } as any,
+      totalCostUsd: 0,
+      lastTerminalReason: null,
       accumulatedUsage: {
         inputTokens: 0,
         outputTokens: 0,
@@ -1476,6 +1478,8 @@ describe("stop reason propagation", () => {
         availableModels: [],
       },
       settingsManager: { dispose: vi.fn() } as any,
+      totalCostUsd: 0,
+      lastTerminalReason: null,
       accumulatedUsage: {
         inputTokens: 0,
         outputTokens: 0,
@@ -1549,6 +1553,8 @@ describe("session/close", () => {
         availableModels: [],
       },
       settingsManager: { dispose: vi.fn() } as any,
+      totalCostUsd: 0,
+      lastTerminalReason: null,
       accumulatedUsage: {
         inputTokens: 0,
         outputTokens: 0,
@@ -1719,6 +1725,8 @@ describe("usage_update computation", () => {
         availableModels: [],
       },
       settingsManager: {} as any,
+      totalCostUsd: 0,
+      lastTerminalReason: null,
       accumulatedUsage: {
         inputTokens: 0,
         outputTokens: 0,
