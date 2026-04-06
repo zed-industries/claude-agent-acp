@@ -1328,6 +1328,7 @@ describe("stop reason propagation", () => {
       input,
       cancelled: false,
       cwd: "/test",
+      sessionFingerprint: JSON.stringify({ cwd: "/test", mcpServers: [] }),
       modes: {
         currentModeId: "default",
         availableModes: [],
@@ -1466,6 +1467,7 @@ describe("stop reason propagation", () => {
       query: messageGenerator() as any,
       input,
       cwd: "/tmp/test",
+      sessionFingerprint: JSON.stringify({ cwd: "/tmp/test", mcpServers: [] }),
       cancelled: false,
       modes: {
         currentModeId: "default",
@@ -1540,6 +1542,7 @@ describe("session/close", () => {
       input: new Pushable(),
       cancelled: false,
       cwd: "/test",
+      sessionFingerprint: JSON.stringify({ cwd: "/test", mcpServers: [] }),
       modes: {
         currentModeId: "default",
         availableModes: [],
@@ -1606,6 +1609,141 @@ describe("session/close", () => {
 
     expect(agent.sessions["session-a"]).toBeUndefined();
     expect(agent.sessions["session-b"]).toBeDefined();
+  });
+});
+
+describe("getOrCreateSession param change detection", () => {
+  function createMockAgent() {
+    const mockClient = {
+      sessionUpdate: async () => {},
+    } as unknown as AgentSideConnection;
+    return new ClaudeAcpAgent(mockClient, { log: () => {}, error: () => {} });
+  }
+
+  function injectSession(
+    agent: ClaudeAcpAgent,
+    sessionId: string,
+    opts: { cwd?: string; mcpServers?: { name: string }[] } = {},
+  ) {
+    const cwd = opts.cwd ?? "/test";
+    const mcpServers = (opts.mcpServers ?? []) as any[];
+    function* empty() {}
+    const gen = Object.assign(empty(), {
+      interrupt: vi.fn(),
+      supportedCommands: vi.fn().mockResolvedValue([]),
+    });
+    agent.sessions[sessionId] = {
+      query: gen as any,
+      input: new Pushable(),
+      cancelled: false,
+      cwd,
+      sessionFingerprint: JSON.stringify({
+        cwd,
+        mcpServers: [...mcpServers].sort((a: any, b: any) => a.name.localeCompare(b.name)),
+      }),
+      modes: { currentModeId: "default", availableModes: [] },
+      models: { currentModelId: "default", availableModels: [] },
+      settingsManager: { dispose: vi.fn() } as any,
+      accumulatedUsage: {
+        inputTokens: 0,
+        outputTokens: 0,
+        cachedReadTokens: 0,
+        cachedWriteTokens: 0,
+      },
+      configOptions: [],
+      promptRunning: false,
+      pendingMessages: new Map(),
+      nextPendingOrder: 0,
+      abortController: new AbortController(),
+    };
+    return agent.sessions[sessionId]!;
+  }
+
+  it("returns cached session when params are unchanged", async () => {
+    const agent = createMockAgent();
+    const session = injectSession(agent, "s1", { cwd: "/project" });
+
+    await agent.unstable_resumeSession({
+      sessionId: "s1",
+      cwd: "/project",
+      mcpServers: [],
+    });
+
+    // Session object should be the exact same reference (not recreated)
+    expect(agent.sessions["s1"]).toBe(session);
+    expect(session.settingsManager.dispose).not.toHaveBeenCalled();
+  });
+
+  it("tears down existing session when cwd changes", async () => {
+    const agent = createMockAgent();
+    const session = injectSession(agent, "s1", { cwd: "/old" });
+
+    // Mock createSession to avoid spawning a real process.
+    // It will throw, but we can catch that — we only need to verify
+    // the old session was torn down before createSession was attempted.
+    const createSessionSpy = vi
+      .spyOn(agent as any, "createSession")
+      .mockRejectedValue(new Error("mock"));
+
+    await expect(
+      agent.unstable_resumeSession({ sessionId: "s1", cwd: "/new", mcpServers: [] }),
+    ).rejects.toThrow("mock");
+
+    // Old session should have been fully torn down
+    expect(session.settingsManager.dispose).toHaveBeenCalled();
+    expect(session.abortController.signal.aborted).toBe(true);
+    expect(session.query.interrupt).toHaveBeenCalled();
+    expect(agent.sessions["s1"]).toBeUndefined();
+
+    // createSession should have been called with the new cwd
+    expect(createSessionSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ cwd: "/new" }),
+      expect.objectContaining({ resume: "s1" }),
+    );
+  });
+
+  it("tears down existing session when mcpServers change", async () => {
+    const agent = createMockAgent();
+    const session = injectSession(agent, "s1", { cwd: "/project" });
+
+    const createSessionSpy = vi
+      .spyOn(agent as any, "createSession")
+      .mockRejectedValue(new Error("mock"));
+
+    await expect(
+      agent.unstable_resumeSession({
+        sessionId: "s1",
+        cwd: "/project",
+        mcpServers: [{ name: "new-server", command: "node", args: ["server.js"], env: [] }],
+      }),
+    ).rejects.toThrow("mock");
+
+    expect(session.settingsManager.dispose).toHaveBeenCalled();
+    expect(session.abortController.signal.aborted).toBe(true);
+    expect(agent.sessions["s1"]).toBeUndefined();
+    expect(createSessionSpy).toHaveBeenCalled();
+  });
+
+  it("treats mcpServers in different order as unchanged", async () => {
+    const agent = createMockAgent();
+    const servers = [
+      { name: "b-server", command: "node", args: ["b.js"], env: [] },
+      { name: "a-server", command: "node", args: ["a.js"], env: [] },
+    ] as const;
+    const session = injectSession(agent, "s1", {
+      cwd: "/project",
+      mcpServers: servers as any,
+    });
+
+    // Same servers but reversed order — should NOT trigger teardown
+    await agent.unstable_resumeSession({
+      sessionId: "s1",
+      cwd: "/project",
+      mcpServers: [...servers].reverse() as any,
+    });
+
+    expect(agent.sessions["s1"]).toBe(session);
+    expect(session.settingsManager.dispose).not.toHaveBeenCalled();
   });
 });
 
@@ -1710,6 +1848,7 @@ describe("usage_update computation", () => {
       input,
       cancelled: false,
       cwd: "/test",
+      sessionFingerprint: JSON.stringify({ cwd: "/test", mcpServers: [] }),
       modes: {
         currentModeId: "default",
         availableModes: [],

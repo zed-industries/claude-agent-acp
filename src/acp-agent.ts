@@ -114,6 +114,9 @@ type Session = {
   input: Pushable<SDKUserMessage>;
   cancelled: boolean;
   cwd: string;
+  /** Serialized snapshot of session-defining params (cwd, mcpServers) used to
+   *  detect when loadSession/resumeSession is called with changed values. */
+  sessionFingerprint: string;
   settingsManager: SettingsManager;
   accumulatedUsage: AccumulatedUsage;
   modes: SessionModeState;
@@ -124,6 +127,18 @@ type Session = {
   nextPendingOrder: number;
   abortController: AbortController;
 };
+
+/** Compute a stable fingerprint of the session-defining params so we can
+ *  detect when a loadSession/resumeSession call requires tearing down and
+ *  recreating the underlying Query process.  MCP servers are sorted by name
+ *  so that ordering differences don't trigger unnecessary recreations. */
+function computeSessionFingerprint(params: {
+  cwd: string;
+  mcpServers?: NewSessionRequest["mcpServers"];
+}): string {
+  const servers = [...(params.mcpServers ?? [])].sort((a, b) => a.name.localeCompare(b.name));
+  return JSON.stringify({ cwd: params.cwd, mcpServers: servers });
+}
 
 type BackgroundTerminal =
   | {
@@ -901,17 +916,24 @@ export class ClaudeAcpAgent implements Agent {
     await session.query.interrupt();
   }
 
-  async unstable_closeSession(params: CloseSessionRequest): Promise<CloseSessionResponse> {
-    const session = this.sessions[params.sessionId];
+  /** Cleanly tear down a session: cancel in-flight work, dispose resources,
+   *  and remove it from the session map. */
+  private async teardownSession(sessionId: string): Promise<void> {
+    const session = this.sessions[sessionId];
     if (!session) {
-      throw new Error("Session not found");
+      return;
     }
-    await this.cancel({ sessionId: params.sessionId });
-
+    await this.cancel({ sessionId });
     session.settingsManager.dispose();
     session.abortController.abort();
-    delete this.sessions[params.sessionId];
+    delete this.sessions[sessionId];
+  }
 
+  async unstable_closeSession(params: CloseSessionRequest): Promise<CloseSessionResponse> {
+    if (!this.sessions[params.sessionId]) {
+      throw new Error("Session not found");
+    }
+    await this.teardownSession(params.sessionId);
     return {};
   }
 
@@ -1260,12 +1282,20 @@ export class ClaudeAcpAgent implements Agent {
   }): Promise<NewSessionResponse> {
     const existingSession = this.sessions[params.sessionId];
     if (existingSession) {
-      return {
-        sessionId: params.sessionId,
-        modes: existingSession.modes,
-        models: existingSession.models,
-        configOptions: existingSession.configOptions,
-      };
+      const fingerprint = computeSessionFingerprint(params);
+      if (fingerprint === existingSession.sessionFingerprint) {
+        return {
+          sessionId: params.sessionId,
+          modes: existingSession.modes,
+          models: existingSession.models,
+          configOptions: existingSession.configOptions,
+        };
+      }
+
+      // Session-defining params changed (e.g. cwd pointed at a git worktree,
+      // or MCP servers reconfigured). Tear down the existing session and
+      // recreate it so the underlying Query process picks up the new values.
+      await this.teardownSession(params.sessionId);
     }
 
     const response = await this.createSession(
@@ -1531,6 +1561,7 @@ export class ClaudeAcpAgent implements Agent {
       input: input,
       cancelled: false,
       cwd: params.cwd,
+      sessionFingerprint: computeSessionFingerprint(params),
       settingsManager,
       accumulatedUsage: {
         inputTokens: 0,
