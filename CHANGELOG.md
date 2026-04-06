@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.25.3](https://github.com/agentclientprotocol/claude-agent-acp/compare/v0.25.2...v0.25.3) (2026-04-06)
+
+
+### Bug Fixes
+
+* Drop claude-agent-sdk back to 0.2.91 to fix broken import ([#513](https://github.com/agentclientprotocol/claude-agent-acp/issues/513)) ([26f3e8a](https://github.com/agentclientprotocol/claude-agent-acp/commit/26f3e8a5216295985fadb80fb3b977045c0c1b2c))
+* Recreate resumed sessions when params change ([#515](https://github.com/agentclientprotocol/claude-agent-acp/issues/515)) ([aa82193](https://github.com/agentclientprotocol/claude-agent-acp/commit/aa82193330026bae132fed8391c47dde777dcf5a))
+
 ## [0.25.2](https://github.com/agentclientprotocol/claude-agent-acp/compare/v0.25.1...v0.25.2) (2026-04-06)
 
 
