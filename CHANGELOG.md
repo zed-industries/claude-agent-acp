@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.25.1](https://github.com/agentclientprotocol/claude-agent-acp/compare/v0.25.0...v0.25.1) (2026-04-06)
+
+
+### Bug Fixes
+
+* add `auto` to valid modes in applySessionMode to fix mode cycling ([#507](https://github.com/agentclientprotocol/claude-agent-acp/issues/507)) ([15e91fb](https://github.com/agentclientprotocol/claude-agent-acp/commit/15e91fb5c3449de2600b583cb7a8d36b5b510443))
+
 ## [0.25.0](https://github.com/agentclientprotocol/claude-agent-acp/compare/v0.24.2...v0.25.0) (2026-04-03)
 
 
