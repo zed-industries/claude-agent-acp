@@ -122,6 +122,7 @@ describe("session config options", () => {
         }),
       ),
       configOptions: structuredClone(MOCK_CONFIG_OPTIONS),
+      fastModeState: "off",
     };
   }
 
@@ -755,6 +756,337 @@ describe("session config options", () => {
       expect(effortOption?.currentValue).toBe("low");
       // applyFlagSettings was called once for the effort change, but not again for the model switch
       expect(applyFlagSettingsSpy).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe("setSessionConfigOption for fast_mode", () => {
+    beforeEach(() => {
+      populateSession();
+      // Add supportsFastMode to modelInfos and fast_mode to configOptions
+      const session = (agent as unknown as { sessions: Record<string, any> }).sessions[SESSION_ID];
+      session.modelInfos = session.modelInfos.map((m: any) => ({
+        ...m,
+        supportsFastMode: true,
+      }));
+      session.configOptions.push({
+        id: "fast_mode",
+        name: "Fast Mode",
+        type: "select",
+        category: "model",
+        description: "Faster output with the same model",
+        currentValue: "off",
+        options: [
+          { value: "off", name: "Off" },
+          { value: "fast", name: "Fast" },
+        ],
+      });
+    });
+
+    it("calls applyFlagSettings with fastMode true when set to fast", async () => {
+      const response = await agent.setSessionConfigOption({
+        sessionId: SESSION_ID,
+        configId: "fast_mode",
+        value: "fast",
+      });
+
+      expect(applyFlagSettingsSpy).toHaveBeenCalledWith({ fastMode: true });
+      const fastOpt = response.configOptions.find((o) => o.id === "fast_mode");
+      expect(fastOpt?.currentValue).toBe("fast");
+    });
+
+    it("calls applyFlagSettings with fastMode false when set to off", async () => {
+      // Turn on first
+      await agent.setSessionConfigOption({
+        sessionId: SESSION_ID,
+        configId: "fast_mode",
+        value: "fast",
+      });
+
+      const response = await agent.setSessionConfigOption({
+        sessionId: SESSION_ID,
+        configId: "fast_mode",
+        value: "off",
+      });
+
+      expect(applyFlagSettingsSpy).toHaveBeenLastCalledWith({ fastMode: false });
+      const fastOpt = response.configOptions.find((o) => o.id === "fast_mode");
+      expect(fastOpt?.currentValue).toBe("off");
+    });
+
+    it("updates session fastModeState when set to fast", async () => {
+      await agent.setSessionConfigOption({
+        sessionId: SESSION_ID,
+        configId: "fast_mode",
+        value: "fast",
+      });
+
+      const session = (agent as unknown as { sessions: Record<string, any> }).sessions[SESSION_ID];
+      expect(session.fastModeState).toBe("on");
+    });
+
+    it("updates session fastModeState when set to off", async () => {
+      await agent.setSessionConfigOption({
+        sessionId: SESSION_ID,
+        configId: "fast_mode",
+        value: "fast",
+      });
+      await agent.setSessionConfigOption({
+        sessionId: SESSION_ID,
+        configId: "fast_mode",
+        value: "off",
+      });
+
+      const session = (agent as unknown as { sessions: Record<string, any> }).sessions[SESSION_ID];
+      expect(session.fastModeState).toBe("off");
+    });
+
+    it("throws for invalid fast_mode value", async () => {
+      await expect(
+        agent.setSessionConfigOption({
+          sessionId: SESSION_ID,
+          configId: "fast_mode",
+          value: "turbo",
+        }),
+      ).rejects.toThrow("Invalid value for config option fast_mode: turbo");
+    });
+
+    it("does not send config_option_update notification", async () => {
+      await agent.setSessionConfigOption({
+        sessionId: SESSION_ID,
+        configId: "fast_mode",
+        value: "fast",
+      });
+
+      const configUpdates = sessionUpdates.filter(
+        (n) => n.update.sessionUpdate === "config_option_update",
+      );
+      expect(configUpdates).toHaveLength(0);
+    });
+
+    it("other options are unchanged when fast_mode is updated", async () => {
+      const response = await agent.setSessionConfigOption({
+        sessionId: SESSION_ID,
+        configId: "fast_mode",
+        value: "fast",
+      });
+
+      const modeOption = response.configOptions.find((o) => o.id === "mode");
+      expect(modeOption?.currentValue).toBe("default");
+      const modelOption = response.configOptions.find((o) => o.id === "model");
+      expect(modelOption?.currentValue).toBe("claude-opus-4-5");
+      const effortOption = response.configOptions.find((o) => o.id === "effort");
+      expect(effortOption?.currentValue).toBe("high");
+    });
+  });
+
+  describe("fast mode and model switch interactions", () => {
+    beforeEach(() => {
+      populateSession();
+    });
+
+    it("rebuilds fast_mode from model metadata when switching to a supporting model", async () => {
+      const session = (agent as unknown as { sessions: Record<string, any> }).sessions[SESSION_ID];
+      session.models = { ...session.models, currentModelId: "claude-sonnet-4-5" };
+      session.configOptions = structuredClone(MOCK_CONFIG_OPTIONS).map((option: any) =>
+        option.id === "model" ? { ...option, currentValue: "claude-sonnet-4-5" } : option,
+      );
+      session.modelInfos = [
+        {
+          value: "claude-opus-4-5",
+          displayName: "Claude Opus",
+          description: "Most capable",
+          supportsEffort: true,
+          supportedEffortLevels: ["low", "medium", "high"],
+          supportsFastMode: true,
+        },
+        {
+          value: "claude-sonnet-4-5",
+          displayName: "Claude Sonnet",
+          description: "Balanced",
+          supportsEffort: true,
+          supportedEffortLevels: ["low", "medium", "high"],
+          supportsFastMode: false,
+        },
+      ];
+
+      const response = await agent.setSessionConfigOption({
+        sessionId: SESSION_ID,
+        configId: "model",
+        value: "claude-opus-4-5",
+      });
+
+      const fastOpt = response.configOptions.find((o) => o.id === "fast_mode");
+      expect(fastOpt).toBeDefined();
+      expect(fastOpt?.currentValue).toBe("off");
+    });
+
+    it("removes rebuilt fast_mode when switching away from a supporting model", async () => {
+      const session = (agent as unknown as { sessions: Record<string, any> }).sessions[SESSION_ID];
+      session.models = { ...session.models, currentModelId: "claude-sonnet-4-5" };
+      session.configOptions = structuredClone(MOCK_CONFIG_OPTIONS).map((option: any) =>
+        option.id === "model" ? { ...option, currentValue: "claude-sonnet-4-5" } : option,
+      );
+      session.modelInfos = [
+        {
+          value: "claude-opus-4-5",
+          displayName: "Claude Opus",
+          description: "Most capable",
+          supportsEffort: true,
+          supportedEffortLevels: ["low", "medium", "high"],
+          supportsFastMode: true,
+        },
+        {
+          value: "claude-sonnet-4-5",
+          displayName: "Claude Sonnet",
+          description: "Balanced",
+          supportsEffort: true,
+          supportedEffortLevels: ["low", "medium", "high"],
+          supportsFastMode: false,
+        },
+      ];
+
+      await agent.setSessionConfigOption({
+        sessionId: SESSION_ID,
+        configId: "model",
+        value: "claude-opus-4-5",
+      });
+      await agent.setSessionConfigOption({
+        sessionId: SESSION_ID,
+        configId: "fast_mode",
+        value: "fast",
+      });
+
+      const response = await agent.setSessionConfigOption({
+        sessionId: SESSION_ID,
+        configId: "model",
+        value: "claude-sonnet-4-5",
+      });
+
+      const fastOpt = response.configOptions.find((o) => o.id === "fast_mode");
+      expect(fastOpt).toBeUndefined();
+    });
+
+    it("drops fast_mode option when switching to a model without fast mode support", async () => {
+      const session = (agent as unknown as { sessions: Record<string, any> }).sessions[SESSION_ID];
+      session.fastModeState = "on";
+      session.modelInfos = [
+        {
+          value: "claude-opus-4-5",
+          displayName: "Claude Opus",
+          description: "Most capable",
+          supportsEffort: true,
+          supportedEffortLevels: ["low", "medium", "high"],
+          supportsFastMode: true,
+        },
+        {
+          value: "claude-sonnet-4-5",
+          displayName: "Claude Sonnet",
+          description: "Balanced",
+          supportsEffort: true,
+          supportedEffortLevels: ["low", "medium", "high"],
+          supportsFastMode: false,
+        },
+      ];
+      session.configOptions.push({
+        id: "fast_mode",
+        name: "Fast Mode",
+        type: "select",
+        category: "model",
+        description: "Faster output with the same model",
+        currentValue: "fast",
+        options: [
+          { value: "off", name: "Off" },
+          { value: "fast", name: "Fast" },
+        ],
+      });
+
+      const response = await agent.setSessionConfigOption({
+        sessionId: SESSION_ID,
+        configId: "model",
+        value: "claude-sonnet-4-5",
+      });
+
+      const fastOpt = response.configOptions.find((o) => o.id === "fast_mode");
+      expect(fastOpt).toBeUndefined();
+    });
+
+    it("adds fast_mode option when switching to a model that supports it", async () => {
+      const session = (agent as unknown as { sessions: Record<string, any> }).sessions[SESSION_ID];
+      session.models = { ...session.models, currentModelId: "claude-sonnet-4-5" };
+      session.modelInfos = [
+        {
+          value: "claude-opus-4-5",
+          displayName: "Claude Opus",
+          description: "Most capable",
+          supportsEffort: true,
+          supportedEffortLevels: ["low", "medium", "high"],
+          supportsFastMode: true,
+        },
+        {
+          value: "claude-sonnet-4-5",
+          displayName: "Claude Sonnet",
+          description: "Balanced",
+          supportsEffort: true,
+          supportedEffortLevels: ["low", "medium", "high"],
+          supportsFastMode: false,
+        },
+      ];
+
+      const response = await agent.setSessionConfigOption({
+        sessionId: SESSION_ID,
+        configId: "model",
+        value: "claude-opus-4-5",
+      });
+
+      const fastOpt = response.configOptions.find((o) => o.id === "fast_mode");
+      expect(fastOpt).toBeDefined();
+      expect(fastOpt?.type).toBe("select");
+      expect(fastOpt?.currentValue).toBe("off");
+    });
+
+    it("preserves fast_mode state when switching between models that both support it", async () => {
+      const session = (agent as unknown as { sessions: Record<string, any> }).sessions[SESSION_ID];
+      session.fastModeState = "on";
+      session.modelInfos = [
+        {
+          value: "claude-opus-4-5",
+          displayName: "Claude Opus",
+          description: "Most capable",
+          supportsEffort: true,
+          supportedEffortLevels: ["low", "medium", "high"],
+          supportsFastMode: true,
+        },
+        {
+          value: "claude-sonnet-4-5",
+          displayName: "Claude Sonnet",
+          description: "Balanced",
+          supportsEffort: true,
+          supportedEffortLevels: ["low", "medium", "high"],
+          supportsFastMode: true,
+        },
+      ];
+      session.configOptions.push({
+        id: "fast_mode",
+        name: "Fast Mode",
+        type: "select",
+        category: "model",
+        description: "Faster output with the same model",
+        currentValue: "fast",
+        options: [
+          { value: "off", name: "Off" },
+          { value: "fast", name: "Fast" },
+        ],
+      });
+
+      const response = await agent.setSessionConfigOption({
+        sessionId: SESSION_ID,
+        configId: "model",
+        value: "claude-sonnet-4-5",
+      });
+
+      const fastOpt = response.configOptions.find((o) => o.id === "fast_mode");
+      expect(fastOpt).toBeDefined();
+      expect(fastOpt?.currentValue).toBe("fast");
     });
   });
 

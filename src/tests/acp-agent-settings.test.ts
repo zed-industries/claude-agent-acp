@@ -30,13 +30,15 @@ describe("ClaudeAcpAgent settings", () => {
     } as unknown as AgentSideConnection;
   }
 
-  function mockQuery() {
+  function mockQuery(initializationResultOverrides: Record<string, unknown> = {}) {
     let capturedOptions: any;
     const setModelSpy = vi.fn();
+    const applyFlagSettingsSpy = vi.fn();
     querySpy.mockImplementation(({ options }: any) => {
       capturedOptions = options;
       return {
         initializationResult: async () => ({
+          account: {},
           models: [
             {
               value: "claude-sonnet-4-5",
@@ -44,12 +46,14 @@ describe("ClaudeAcpAgent settings", () => {
               description: "Default",
             },
           ],
+          ...initializationResultOverrides,
         }),
         setModel: setModelSpy,
+        applyFlagSettings: applyFlagSettingsSpy,
         supportedCommands: async () => [],
       } as any;
     });
-    return { getCapturedOptions: () => capturedOptions, setModelSpy };
+    return { getCapturedOptions: () => capturedOptions, setModelSpy, applyFlagSettingsSpy };
   }
 
   beforeEach(async () => {
@@ -216,5 +220,44 @@ describe("ClaudeAcpAgent settings", () => {
 
     expect(setModelSpy).toHaveBeenCalledWith("claude-opus-4-6-1m");
     expect(response.models.currentModelId).toBe("claude-opus-4-6-1m");
+  });
+
+  it("includes fast_mode in new sessions when the SDK reports support and an active state", async () => {
+    const projectDir = path.join(tempDir, "project");
+    await fs.promises.mkdir(projectDir, { recursive: true });
+
+    mockQuery({
+      fast_mode_state: "on",
+      models: [
+        {
+          value: "claude-sonnet-4-5",
+          displayName: "Claude Sonnet 4.5",
+          description: "Default",
+          supportsFastMode: true,
+          supportsEffort: false,
+        },
+      ],
+    });
+
+    const { ClaudeAcpAgent } = await import("../acp-agent.js");
+    const agent: ClaudeAcpAgentType = new ClaudeAcpAgent(createMockClient());
+
+    const response = await agent.newSession({
+      cwd: projectDir,
+      mcpServers: [],
+      _meta: { disableBuiltInTools: true },
+    });
+
+    expect(response.configOptions).toBeDefined();
+    const fastModeOption = response.configOptions?.find((o) => o.id === "fast_mode");
+    expect(fastModeOption).toMatchObject({
+      id: "fast_mode",
+      currentValue: "fast",
+      options: [
+        { value: "off", name: "Off" },
+        { value: "fast", name: "Fast" },
+      ],
+    });
+    expect((agent as any).sessions[response.sessionId].fastModeState).toBe("on");
   });
 });

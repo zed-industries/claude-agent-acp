@@ -1350,6 +1350,7 @@ describe("stop reason propagation", () => {
       pendingMessages: new Map(),
       nextPendingOrder: 0,
       abortController: new AbortController(),
+      fastModeState: "off",
     };
   }
 
@@ -1491,6 +1492,7 @@ describe("stop reason propagation", () => {
       promptRunning: false,
       pendingMessages: new Map(),
       nextPendingOrder: 0,
+      fastModeState: "off",
     };
 
     const response = await agent.prompt({
@@ -1566,6 +1568,7 @@ describe("session/close", () => {
       pendingMessages: new Map(),
       nextPendingOrder: 0,
       abortController: new AbortController(),
+      fastModeState: "off",
     };
     return agent.sessions[sessionId]!;
   }
@@ -1646,6 +1649,7 @@ describe("getOrCreateSession param change detection", () => {
       }),
       modes: { currentModeId: "default", availableModes: [] },
       models: { currentModelId: "default", availableModels: [] },
+      modelInfos: [],
       settingsManager: { dispose: vi.fn() } as any,
       accumulatedUsage: {
         inputTokens: 0,
@@ -1658,6 +1662,7 @@ describe("getOrCreateSession param change detection", () => {
       pendingMessages: new Map(),
       nextPendingOrder: 0,
       abortController: new AbortController(),
+      fastModeState: "off",
     };
     return agent.sessions[sessionId]!;
   }
@@ -1792,6 +1797,7 @@ describe("usage_update computation", () => {
         maxOutputTokens: number;
       }
     >;
+    fast_mode_state?: "off" | "cooldown" | "on";
   }) {
     return {
       type: "result" as const,
@@ -1811,6 +1817,7 @@ describe("usage_update computation", () => {
         cache_creation_input_tokens: 0,
       },
       modelUsage: overrides.modelUsage,
+      fast_mode_state: overrides.fast_mode_state,
       permission_denials: [],
       uuid: randomUUID(),
       session_id: "test-session",
@@ -1828,7 +1835,7 @@ describe("usage_update computation", () => {
     return { agent, updates };
   }
 
-  function injectSession(agent: ClaudeAcpAgent, messages: any[]) {
+  function injectSession(agent: ClaudeAcpAgent, messages: any[], sessionOverrides: any = {}) {
     const input = new Pushable<any>();
     async function* messageGenerator() {
       // Wait for the prompt to push its user message so we can replay it
@@ -1860,6 +1867,7 @@ describe("usage_update computation", () => {
         currentModelId: "default",
         availableModels: [],
       },
+      modelInfos: [],
       settingsManager: {} as any,
       accumulatedUsage: {
         inputTokens: 0,
@@ -1872,6 +1880,8 @@ describe("usage_update computation", () => {
       pendingMessages: new Map(),
       nextPendingOrder: 0,
       abortController: new AbortController(),
+      fastModeState: "off",
+      ...sessionOverrides,
     };
   }
 
@@ -1910,6 +1920,72 @@ describe("usage_update computation", () => {
     expect(usageUpdate).toBeDefined();
     // used = input(1000) + output(500) + cache_read(200) + cache_creation(100) = 1800
     expect(usageUpdate.update.used).toBe(1800);
+  });
+
+  it("syncs fast_mode_state cooldown from streamed result messages", async () => {
+    const { agent, updates } = createMockAgentWithCapture();
+    injectSession(
+      agent,
+      [
+        createAssistantMessage({ model: "claude-opus-4-20250514" }),
+        createResultMessageWithModel({
+          fast_mode_state: "cooldown",
+          modelUsage: {
+            "claude-opus-4-20250514": {
+              inputTokens: 1000,
+              outputTokens: 500,
+              cacheReadInputTokens: 200,
+              cacheCreationInputTokens: 100,
+              webSearchRequests: 0,
+              costUSD: 0.01,
+              contextWindow: 1000000,
+              maxOutputTokens: 16384,
+            },
+          },
+        }),
+        { type: "system", subtype: "session_state_changed", state: "idle" },
+      ],
+      {
+        fastModeState: "on",
+        modelInfos: [
+          {
+            value: "claude-opus-4-20250514",
+            displayName: "Claude Opus",
+            description: "Most capable",
+            supportsEffort: false,
+            supportsFastMode: true,
+          },
+        ],
+        configOptions: [
+          {
+            id: "fast_mode",
+            name: "Fast Mode",
+            type: "select",
+            category: "model",
+            description: "Faster output with the same model",
+            currentValue: "fast",
+            options: [
+              { value: "off", name: "Off" },
+              { value: "fast", name: "Fast" },
+            ],
+          },
+        ],
+      },
+    );
+
+    await agent.prompt({ sessionId: "test-session", prompt: [{ type: "text", text: "test" }] });
+
+    expect(agent.sessions["test-session"]?.fastModeState).toBe("cooldown");
+    const configUpdate = updates.find(
+      (u: any) => u.update?.sessionUpdate === "config_option_update",
+    );
+    expect(configUpdate).toBeDefined();
+    expect(configUpdate.update.configOptions).toContainEqual(
+      expect.objectContaining({
+        id: "fast_mode",
+        currentValue: "off",
+      }),
+    );
   });
 
   it("size reflects the current model's context window, not min across all", async () => {

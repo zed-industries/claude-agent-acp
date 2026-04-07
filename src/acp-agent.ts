@@ -128,6 +128,7 @@ type Session = {
   pendingMessages: Map<string, { resolve: (cancelled: boolean) => void; order: number }>;
   nextPendingOrder: number;
   abortController: AbortController;
+  fastModeState: "off" | "cooldown" | "on";
 };
 
 /** Compute a stable fingerprint of the session-defining params so we can
@@ -656,6 +657,26 @@ export class ClaudeAcpAgent implements Agent {
               });
             }
 
+            // Sync fast mode state from result message (tracks cooldown)
+            if ("fast_mode_state" in message && message.fast_mode_state) {
+              const newState = message.fast_mode_state;
+              if (session.fastModeState !== newState) {
+                session.fastModeState = newState;
+                session.configOptions = session.configOptions.map((o) =>
+                  o.id === "fast_mode" && o.type === "select"
+                    ? { ...o, currentValue: newState === "on" ? "fast" : "off" }
+                    : o,
+                );
+                await this.client.sessionUpdate({
+                  sessionId: params.sessionId,
+                  update: {
+                    sessionUpdate: "config_option_update",
+                    configOptions: session.configOptions,
+                  },
+                });
+              }
+            }
+
             if (session.cancelled) {
               stopReason = "cancelled";
               break;
@@ -1019,6 +1040,10 @@ export class ClaudeAcpAgent implements Agent {
       await this.sessions[params.sessionId].query.applyFlagSettings({
         effortLevel: resolvedValue as Settings["effortLevel"],
       });
+    } else if (params.configId === "fast_mode") {
+      const fastMode = resolvedValue === "fast";
+      await session.query.applyFlagSettings({ fastMode });
+      session.fastModeState = fastMode ? "on" : "off";
     }
 
     await this.applyConfigOptionValue(session, params.configId, resolvedValue);
@@ -1285,6 +1310,7 @@ export class ClaudeAcpAgent implements Agent {
         session.models,
         session.modelInfos,
         currentEffort,
+        session.fastModeState,
       );
 
       // Sync effort with the SDK if it changed after the model switch
@@ -1583,11 +1609,13 @@ export class ClaudeAcpAgent implements Agent {
       availableModes,
     };
 
+    const initialFastModeState = initializationResult.fast_mode_state ?? "off";
     const configOptions = buildConfigOptions(
       modes,
       models,
       initializationResult.models,
       settingsManager.getSettings().effortLevel,
+      initialFastModeState,
     );
 
     // Apply the initial effort level to the SDK so it matches the UI default
@@ -1619,6 +1647,7 @@ export class ClaudeAcpAgent implements Agent {
       pendingMessages: new Map(),
       nextPendingOrder: 0,
       abortController,
+      fastModeState: initializationResult.fast_mode_state ?? "off",
     };
 
     return {
@@ -1662,6 +1691,7 @@ function buildConfigOptions(
   models: SessionModelState,
   modelInfos: ModelInfo[],
   currentEffortLevel?: string,
+  fastModeState?: "off" | "cooldown" | "on",
 ): SessionConfigOption[] {
   const options: SessionConfigOption[] = [
     {
@@ -1721,6 +1751,22 @@ function buildConfigOptions(
       type: "select",
       currentValue: validEffort,
       options: effortOptions,
+    });
+  }
+
+  // Add fast mode toggle if the current model supports it
+  if (currentModelInfo?.supportsFastMode && fastModeState) {
+    options.push({
+      id: "fast_mode",
+      name: "Fast Mode",
+      type: "select",
+      category: "model",
+      description: "Faster output with the same model",
+      currentValue: fastModeState === "on" ? "fast" : "off",
+      options: [
+        { value: "off", name: "Off" },
+        { value: "fast", name: "Fast" },
+      ],
     });
   }
 
