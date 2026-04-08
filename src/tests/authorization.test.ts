@@ -169,6 +169,44 @@ describe("authorization", () => {
     );
   });
 
+  it("NO_BROWSER falls back to single legacy login method", async () => {
+    const [agent] = await createAgentMock();
+    vi.stubGlobal("process", { ...process, env: { ...process.env, NO_BROWSER: "1" } });
+
+    const initializeResponse = await agent.initialize({
+      protocolVersion: 1,
+      clientCapabilities: { auth: { terminal: true } },
+    });
+
+    expect(initializeResponse.authMethods).toContainEqual(
+      expect.objectContaining({ id: "claude-login" }),
+    );
+    expect(initializeResponse.authMethods).not.toContainEqual(
+      expect.objectContaining({ id: "claude-ai-login" }),
+    );
+    expect(initializeResponse.authMethods).not.toContainEqual(
+      expect.objectContaining({ id: "console-login" }),
+    );
+  });
+
+  it("NO_BROWSER respects hide-claude-auth", async () => {
+    const [agent] = await createAgentMock();
+    vi.stubGlobal("process", {
+      ...process,
+      argv: ["--hide-claude-auth"],
+      env: { ...process.env, NO_BROWSER: "1" },
+    });
+
+    const initializeResponse = await agent.initialize({
+      protocolVersion: 1,
+      clientCapabilities: { auth: { terminal: true } },
+    });
+
+    expect(initializeResponse.authMethods).not.toContainEqual(
+      expect.objectContaining({ id: "claude-login" }),
+    );
+  });
+
   it("show claude authentication", async () => {
     const [agent] = await createAgentMock();
 
