@@ -1130,6 +1130,7 @@ export class ClaudeAcpAgent implements Agent {
 
       if (toolName === "ExitPlanMode") {
         const options = [
+          { kind: "allow_always", name: 'Yes, and use "auto" mode', optionId: "auto" },
           {
             kind: "allow_always",
             name: "Yes, and auto-accept edits",
@@ -1167,6 +1168,7 @@ export class ClaudeAcpAgent implements Agent {
           response.outcome?.outcome === "selected" &&
           (response.outcome.optionId === "default" ||
             response.outcome.optionId === "acceptEdits" ||
+            response.outcome.optionId === "auto" ||
             response.outcome.optionId === "bypassPermissions")
         ) {
           await this.client.sessionUpdate({
@@ -1546,7 +1548,7 @@ export class ClaudeAcpAgent implements Agent {
       {
         id: "auto",
         name: "Auto",
-        decription: "Use a model classifier to approve/deny permission prompts.",
+        description: "Use a model classifier to approve/deny permission prompts.",
       },
       {
         id: "default",
