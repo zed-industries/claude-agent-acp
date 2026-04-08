@@ -131,7 +131,6 @@ describe("ClaudeAcpAgent settings", () => {
     });
 
     expect(getCapturedOptions().configDir).toBe(invocationDir);
-    expect(getCapturedOptions().env.CLAUDE_CONFIG_DIR).toBe(invocationClaudeDir);
     expect(response.modes.currentModeId).toBe("plan");
   });
 

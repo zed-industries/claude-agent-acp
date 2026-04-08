@@ -368,10 +368,13 @@ export function toolInfoFromToolUse(
     }
 
     case "ExitPlanMode": {
+      const planInput = toolUse.input as { plan?: string };
       return {
         title: "Ready to code?",
         kind: "switch_mode",
-        content: [],
+        content: planInput?.plan
+          ? [{ type: "content" as const, content: { type: "text" as const, text: planInput.plan } }]
+          : [],
       };
     }
 
@@ -481,7 +484,7 @@ export function toolUpdateFromToolResult(
         result.type === "bash_code_execution_result"
       ) {
         const bashResult = result as BetaBashCodeExecutionResultBlock;
-        output = bashResult.stdout || bashResult.stderr || "";
+        output = [bashResult.stdout, bashResult.stderr].filter(Boolean).join("\n");
         exitCode = bashResult.return_code;
       } else if (typeof result === "string") {
         output = result;

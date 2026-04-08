@@ -1,10 +1,10 @@
 {
-  "name": "@ni2khanna/claude-agent-acp",
+  "name": "@agentclientprotocol/claude-agent-acp",
   "publishConfig": {
     "access": "public"
   },
-  "version": "0.23.3",
-  "description": "An ACP-compatible coding agent powered by the Claude Agent SDK with invocation-specific Claude state",
+  "version": "0.25.3",
+  "description": "An ACP-compatible coding agent powered by the Claude Agent SDK (TypeScript)",
   "main": "dist/lib.js",
   "types": "dist/lib.d.ts",
   "bin": {
@@ -49,34 +49,33 @@
     "sdk",
     "code"
   ],
-  "homepage": "https://github.com/papiguy/claude-agent-acp#readme",
+  "homepage": "https://github.com/agentclientprotocol/claude-agent-acp#readme",
   "bugs": {
-    "url": "https://github.com/papiguy/claude-agent-acp/issues"
+    "url": "https://github.com/agentclientprotocol/claude-agent-acp/issues"
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/papiguy/claude-agent-acp.git"
+    "url": "git+https://github.com/agentclientprotocol/claude-agent-acp.git"
   },
   "author": "Zed Industries & Nitin khanna",
   "license": "Apache-2.0",
   "dependencies": {
-    "@agentclientprotocol/sdk": "^0.16.1",
-    "@anthropic-ai/claude-agent-sdk": "^0.2.76",
+    "@agentclientprotocol/sdk": "0.18.0",
+    "@anthropic-ai/claude-agent-sdk": "0.2.91",
     "zod": "^3.25.0 || ^4.0.0"
   },
   "devDependencies": {
-    "@anthropic-ai/claude-code": "^2.1.77",
-    "@anthropic-ai/sdk": "^0.79.0",
+    "@anthropic-ai/sdk": "0.82.0",
     "@eslint/js": "10.0.1",
-    "@types/node": "^25.5.0",
-    "@typescript-eslint/eslint-plugin": "^8.57.1",
-    "@typescript-eslint/parser": "^8.57.1",
-    "eslint": "10.0.3",
+    "@types/node": "25.5.2",
+    "@typescript-eslint/eslint-plugin": "8.58.0",
+    "@typescript-eslint/parser": "8.58.0",
+    "eslint": "10.2.0",
     "eslint-config-prettier": "10.1.8",
     "globals": "17.4.0",
     "prettier": "3.8.1",
     "ts-node": "10.9.2",
-    "typescript": "5.9.3",
-    "vitest": "^4.1.0"
+    "typescript": "6.0.2",
+    "vitest": "4.1.2"
   }
 }

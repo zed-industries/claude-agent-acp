@@ -1,5 +1,86 @@
 # Changelog
 
+## [0.25.3](https://github.com/agentclientprotocol/claude-agent-acp/compare/v0.25.2...v0.25.3) (2026-04-06)
+
+
+### Bug Fixes
+
+* Drop claude-agent-sdk back to 0.2.91 to fix broken import ([#513](https://github.com/agentclientprotocol/claude-agent-acp/issues/513)) ([26f3e8a](https://github.com/agentclientprotocol/claude-agent-acp/commit/26f3e8a5216295985fadb80fb3b977045c0c1b2c))
+* Recreate resumed sessions when params change ([#515](https://github.com/agentclientprotocol/claude-agent-acp/issues/515)) ([aa82193](https://github.com/agentclientprotocol/claude-agent-acp/commit/aa82193330026bae132fed8391c47dde777dcf5a))
+
+## [0.25.2](https://github.com/agentclientprotocol/claude-agent-acp/compare/v0.25.1...v0.25.2) (2026-04-06)
+
+
+### Bug Fixes
+
+* prioritize ANTHROPIC_MODEL env var over settings.model in model … ([#505](https://github.com/agentclientprotocol/claude-agent-acp/issues/505)) ([bea1a40](https://github.com/agentclientprotocol/claude-agent-acp/commit/bea1a40e9bfe1e06672b118a727f9339def3be23))
+
+## [0.25.1](https://github.com/agentclientprotocol/claude-agent-acp/compare/v0.25.0...v0.25.1) (2026-04-06)
+
+
+### Bug Fixes
+
+* add `auto` to valid modes in applySessionMode to fix mode cycling ([#507](https://github.com/agentclientprotocol/claude-agent-acp/issues/507)) ([15e91fb](https://github.com/agentclientprotocol/claude-agent-acp/commit/15e91fb5c3449de2600b583cb7a8d36b5b510443))
+
+## [0.25.0](https://github.com/agentclientprotocol/claude-agent-acp/compare/v0.24.2...v0.25.0) (2026-04-03)
+
+
+### Features
+
+* Add auto permission mode support ([#501](https://github.com/agentclientprotocol/claude-agent-acp/issues/501)) ([a161453](https://github.com/agentclientprotocol/claude-agent-acp/commit/a16145396fe2e6ead8734478961b2de65707e335))
+* Add separate Claude and Console terminal logins ([#502](https://github.com/agentclientprotocol/claude-agent-acp/issues/502)) ([063cd35](https://github.com/agentclientprotocol/claude-agent-acp/commit/063cd353809df8f3dda9e57d8ea848c0a6d44257))
+* Update to claude-agent-sdk 0.2.91 ([#500](https://github.com/agentclientprotocol/claude-agent-acp/issues/500)) ([65a2230](https://github.com/agentclientprotocol/claude-agent-acp/commit/65a223038576d72b74e1483fed10e982a1f842bd))
+
+
+### Bug Fixes
+
+* log warnings for malformed settings files instead of silent fallback ([#486](https://github.com/agentclientprotocol/claude-agent-acp/issues/486)) ([ae6c388](https://github.com/agentclientprotocol/claude-agent-acp/commit/ae6c38831415f9fc1de2d3dd1d4a247becbbd32f))
+* prevent race conditions in SettingsManager setCwd and debounce ([#485](https://github.com/agentclientprotocol/claude-agent-acp/issues/485)) ([7506223](https://github.com/agentclientprotocol/claude-agent-acp/commit/7506223cffb1aba4b4560feda11f69a1395a8c9d))
+* use current model's context window for usage_update size ([#412](https://github.com/agentclientprotocol/claude-agent-acp/issues/412)) ([d07799d](https://github.com/agentclientprotocol/claude-agent-acp/commit/d07799d7b3b4e438c8b158266c79723a0b592c07))
+
+## [0.24.2](https://github.com/agentclientprotocol/claude-agent-acp/compare/v0.24.1...v0.24.2) (2026-03-27)
+
+
+### Bug Fixes
+
+* Add explicit type checks for MCP servers (http/sse) ([#487](https://github.com/agentclientprotocol/claude-agent-acp/issues/487)) ([e00a439](https://github.com/agentclientprotocol/claude-agent-acp/commit/e00a43901fa2b4fd7d582e1de57277be88233007))
+
+## [0.24.1](https://github.com/agentclientprotocol/claude-agent-acp/compare/v0.24.0...v0.24.1) (2026-03-26)
+
+
+### Bug Fixes
+
+* Cleanup based on new idle state [#463](https://github.com/agentclientprotocol/claude-agent-acp/issues/463) ([#480](https://github.com/agentclientprotocol/claude-agent-acp/issues/480)) ([23b3073](https://github.com/agentclientprotocol/claude-agent-acp/commit/23b30730253752f0bc4e30b619a6236f16fafdb9))
+
+## 0.24.0
+
+Rename from `@zed-industries/claude-agent-acp` to `@agentclientprotocol/claude-agent-acp`.
+
+We are moving this to the main ACP org to better allow multiple teams to contribute and maintain this adapter.
+
+## 0.23.1
+
+- Add back error_during_execution break point (#469)
+
+## 0.23.0
+
+- Use idle session state as end of turn (#463)
+- Update claude-agent-sdk to 0.2.83 (#462)
+- Fix handling of local-only slash commands (#432)
+- fix: correct null check for gatewayAuthMeta in subscription validation (#455)
+- fix: include both stdout and stderr in Bash tool output (#456)
+- fix: prevent prompt loop hang when cancel races with first result (#458)
+- fix: dispose SettingsManager on session close to prevent resource leaks (#454)
+- fix: restore plan content in ExitPlanMode tool call (#451)
+
+## 0.22.2
+
+- Add experimental meta param for testing additional directories
+
+## 0.22.1
+
+- Fix: invalid auth required state in gateway mode
+
 ## 0.22.0
 
 - Use stable list sessions method (#429)

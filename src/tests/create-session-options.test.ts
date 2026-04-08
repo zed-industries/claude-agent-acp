@@ -355,6 +355,5 @@ describe("createSession options merging", () => {
     });
 
     expect(capturedOptions!.configDir).toBe("/users/alice/project-one");
-    expect(capturedOptions!.env?.CLAUDE_CONFIG_DIR).toBe("/users/alice/project-one/.claude");
   });
 });
