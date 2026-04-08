@@ -593,10 +593,10 @@ export class ClaudeAcpAgent implements Agent {
           session.emitRawSDKMessages &&
           shouldEmitRawMessage(session.emitRawSDKMessages, message)
         ) {
-          await this.client.extNotification(
-            "_claude/sdkMessage",
-            message as Record<string, unknown>,
-          );
+          await this.client.extNotification("_claude/sdkMessage", {
+            sessionId: params.sessionId,
+            message: message as Record<string, unknown>,
+          });
         }
 
         switch (message.type) {
