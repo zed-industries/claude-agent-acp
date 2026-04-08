@@ -2239,7 +2239,7 @@ export function runAcp() {
   const output = nodeToWebReadable(process.stdin);
 
   const stream = ndJsonStream(input, output);
-  new AgentSideConnection((client) => new ClaudeAcpAgent(client), stream);
+  return new AgentSideConnection((client) => new ClaudeAcpAgent(client), stream);
 }
 
 function commonPrefixLength(a: string, b: string) {
