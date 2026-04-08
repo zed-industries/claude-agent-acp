@@ -38,7 +38,8 @@ jobs:
     name: Build (${{ matrix.target }})
     runs-on: ubuntu-latest
     needs: [release-please]
-    if: ${{ needs.release-please.outputs.release_created }}
+    # TODO: Re-enable once Bun SDK compatibility is fixed
+    if: false
     permissions:
       contents: read
     timeout-minutes: 15
@@ -107,7 +108,7 @@ jobs:
   publish-npm:
     name: Publish to npm
     runs-on: ubuntu-latest
-    needs: [build-binaries, release-please]
+    needs: [release-please]
     if: ${{ needs.release-please.outputs.release_created }}
     environment: release # Optional: for enhanced security
     permissions:
@@ -129,8 +130,9 @@ jobs:
   release:
     name: Create Release
     runs-on: ubuntu-latest
-    needs: [build-binaries, publish-npm, release-please]
-    if: ${{ needs.release-please.outputs.release_created }}
+    needs: [publish-npm, release-please]
+    # TODO: Re-enable once Bun SDK compatibility is fixed
+    if: false
     permissions:
       contents: write
 
