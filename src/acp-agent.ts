@@ -94,6 +94,42 @@ function sanitizeTitle(text: string): string {
   return sanitized.slice(0, MAX_TITLE_LENGTH - 1) + "…";
 }
 
+function normalizeRateLimitWindowType(rateLimitType?: string): "FIVE_HOUR" | "WEEKLY" {
+  switch (rateLimitType) {
+    case "seven_day":
+    case "seven_day_opus":
+    case "seven_day_sonnet":
+      return "WEEKLY";
+    default:
+      return "FIVE_HOUR";
+  }
+}
+
+function toQuotaSessionNotification(
+  sessionId: string,
+  rateLimitInfo: { rateLimitType?: string; resetsAt?: number; utilization?: number },
+): SessionNotification {
+  return {
+    sessionId,
+    _meta: {
+      codor: {
+        kind: "quota",
+        window: normalizeRateLimitWindowType(rateLimitInfo.rateLimitType),
+        limitedUntil:
+          typeof rateLimitInfo.resetsAt === "number"
+            ? new Date(rateLimitInfo.resetsAt * 1000).toISOString()
+            : new Date().toISOString(),
+        utilization: rateLimitInfo.utilization ?? 0,
+      },
+    },
+    update: {
+      sessionUpdate: "usage_update",
+      size: 0,
+      used: 0,
+    },
+  };
+}
+
 /**
  * Logger interface for customizing logging output
  */
@@ -884,6 +920,11 @@ export class ClaudeAcpAgent implements Agent {
           case "auth_status":
           case "prompt_suggestion":
           case "rate_limit_event":
+            if (message.type === "rate_limit_event") {
+              await this.client.sessionUpdate(
+                toQuotaSessionNotification(params.sessionId, message.rate_limit_info),
+              );
+            }
             break;
           default:
             unreachable(message);

@@ -1909,6 +1909,70 @@ describe("usage_update computation", () => {
     expect(usageUpdate.update.used).toBe(1800);
   });
 
+  it("emits codor quota metadata for rate_limit_event messages", async () => {
+    const { agent, updates } = createMockAgentWithCapture();
+    const resetsAt = Math.floor(Date.now() / 1000) + 3600;
+    const resetAtIso = new Date(resetsAt * 1000).toISOString();
+
+    injectSession(agent, [
+      {
+        type: "rate_limit_event" as const,
+        rate_limit_info: {
+          status: "allowed_warning" as const,
+          resetsAt,
+          rateLimitType: "five_hour" as const,
+          utilization: 0.85,
+        },
+        uuid: randomUUID(),
+        session_id: "test-session",
+      },
+      {
+        type: "result" as const,
+        subtype: "success" as const,
+        stop_reason: null,
+        is_error: false,
+        result: "",
+        errors: [],
+        duration_ms: 0,
+        duration_api_ms: 0,
+        num_turns: 1,
+        total_cost_usd: 0,
+        usage: {
+          input_tokens: 10,
+          output_tokens: 5,
+          cache_read_input_tokens: 0,
+          cache_creation_input_tokens: 0,
+        },
+        modelUsage: {},
+        permission_denials: [],
+        uuid: randomUUID(),
+        session_id: "test-session",
+      },
+      { type: "system", subtype: "session_state_changed", state: "idle" },
+    ]);
+
+    await agent.prompt({
+      sessionId: "test-session",
+      prompt: [{ type: "text", text: "test" }],
+    });
+
+    const quotaUpdate = updates.find(
+      (u: any) => u._meta?.codor?.kind === "quota" && u.update?.sessionUpdate === "usage_update",
+    );
+    expect(quotaUpdate).toBeDefined();
+    expect(quotaUpdate._meta.codor).toMatchObject({
+      kind: "quota",
+      window: "FIVE_HOUR",
+      limitedUntil: resetAtIso,
+      utilization: 0.85,
+    });
+    expect(quotaUpdate.update).toMatchObject({
+      sessionUpdate: "usage_update",
+      size: 0,
+      used: 0,
+    });
+  });
+
   it("size reflects the current model's context window, not min across all", async () => {
     const { agent, updates } = createMockAgentWithCapture();
     injectSession(agent, [
