@@ -112,7 +112,7 @@ function toQuotaSessionNotification(
   return {
     sessionId,
     _meta: {
-      codor: {
+      claude: {
         kind: "quota",
         window: normalizeRateLimitWindowType(rateLimitInfo.rateLimitType),
         limitedUntil:

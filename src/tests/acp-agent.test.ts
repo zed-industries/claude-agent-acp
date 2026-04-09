@@ -1909,7 +1909,7 @@ describe("usage_update computation", () => {
     expect(usageUpdate.update.used).toBe(1800);
   });
 
-  it("emits codor quota metadata for rate_limit_event messages", async () => {
+  it("emits claude quota metadata for rate_limit_event messages", async () => {
     const { agent, updates } = createMockAgentWithCapture();
     const resetsAt = Math.floor(Date.now() / 1000) + 3600;
     const resetAtIso = new Date(resetsAt * 1000).toISOString();
@@ -1957,10 +1957,10 @@ describe("usage_update computation", () => {
     });
 
     const quotaUpdate = updates.find(
-      (u: any) => u._meta?.codor?.kind === "quota" && u.update?.sessionUpdate === "usage_update",
+      (u: any) => u._meta?.claude?.kind === "quota" && u.update?.sessionUpdate === "usage_update",
     );
     expect(quotaUpdate).toBeDefined();
-    expect(quotaUpdate._meta.codor).toMatchObject({
+    expect(quotaUpdate._meta.claude).toMatchObject({
       kind: "quota",
       window: "FIVE_HOUR",
       limitedUntil: resetAtIso,
