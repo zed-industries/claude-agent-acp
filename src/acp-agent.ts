@@ -854,11 +854,11 @@ export class ClaudeAcpAgent implements Agent {
           case "tool_progress": {
             // Forward tool execution progress via extNotification so clients can
             // show elapsed time for long-running tools without polluting tool output.
-            const toolCallId = "tool_use_id" in message ? (message as any).tool_use_id : undefined;
-            if (toolCallId) {
+            const toolUseId = "tool_use_id" in message ? (message as any).tool_use_id : undefined;
+            if (toolUseId) {
               await this.client.extNotification("_claude/tool-progress", {
                 sessionId: params.sessionId,
-                toolCallId,
+                toolUseId,
                 toolName: (message as any).tool_name ?? null,
                 elapsedTimeSeconds: (message as any).elapsed_time_seconds ?? 0,
               });
@@ -873,6 +873,10 @@ export class ClaudeAcpAgent implements Agent {
               await this.client.extNotification("_claude/tool-use-summary", {
                 sessionId: params.sessionId,
                 summary,
+                precedingToolUseIds:
+                  "preceding_tool_use_ids" in message
+                    ? (message as any).preceding_tool_use_ids ?? []
+                    : [],
               });
             }
             break;
@@ -891,6 +895,7 @@ export class ClaudeAcpAgent implements Agent {
                 overageStatus: info.overageStatus ?? null,
                 overageDisabledReason: info.overageDisabledReason ?? null,
                 isUsingOverage: info.isUsingOverage ?? false,
+                surpassedThreshold: info.surpassedThreshold ?? null,
               });
             }
             break;
