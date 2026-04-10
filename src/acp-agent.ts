@@ -116,10 +116,6 @@ type Session = {
   cwd: string;
   settingsManager: SettingsManager;
   accumulatedUsage: AccumulatedUsage;
-  /** Cumulative cost in USD for this session (from SDK result messages) */
-  totalCostUsd: number;
-  /** Terminal reason from the last SDK result (e.g. "blocking_limit", "completed") */
-  lastTerminalReason: string | null;
   modes: SessionModeState;
   models: SessionModelState;
   configOptions: SessionConfigOption[];
@@ -490,9 +486,6 @@ export class ClaudeAcpAgent implements Agent {
       cachedReadTokens: 0,
       cachedWriteTokens: 0,
     };
-    session.totalCostUsd = 0;
-    session.lastTerminalReason = null;
-
     let lastAssistantTotalUsage: number | null = null;
     let lastAssistantModel: string | null = null;
     let lastContextWindowSize: number = 200000;
@@ -596,11 +589,7 @@ export class ClaudeAcpAgent implements Agent {
               }
               case "session_state_changed": {
                 if (message.state === "idle") {
-                  return {
-                    stopReason,
-                    usage: sessionUsage(session),
-                    _meta: sessionMeta(session),
-                  };
+                  return { stopReason, usage: sessionUsage(session) };
                 }
                 break;
               }
@@ -612,30 +601,23 @@ export class ClaudeAcpAgent implements Agent {
               case "task_notification":
               case "task_progress":
               case "elicitation_complete":
+                break;
               case "api_retry": {
-                // Forward API retry events so clients can observe transient failures,
-                // including the HTTP status code and typed error category.
+                // Forward API retry events via extNotification so clients can observe
+                // transient failures including HTTP status code and typed error category.
                 const retryMsg = message as any;
                 this.logger.error(
                   `API retry: attempt=${retryMsg.attempt}/${retryMsg.max_retries}, ` +
                   `httpStatus=${retryMsg.error_status}, error=${retryMsg.error}, ` +
                   `delay=${retryMsg.retry_delay_ms}ms`,
                 );
-                await this.client.sessionUpdate({
-                  sessionId: retryMsg.session_id,
-                  _meta: {
-                    apiRetry: {
-                      httpStatus: retryMsg.error_status ?? null,
-                      errorType: retryMsg.error ?? "unknown",
-                      attempt: retryMsg.attempt ?? 0,
-                      maxRetries: retryMsg.max_retries ?? 0,
-                      retryDelayMs: retryMsg.retry_delay_ms ?? 0,
-                    },
-                  },
-                  update: {
-                    sessionUpdate: "agent_message_chunk",
-                    content: { type: "text", text: "" },
-                  },
+                await this.client.extNotification("_claude/api-retry", {
+                  sessionId: params.sessionId,
+                  httpStatus: retryMsg.error_status ?? null,
+                  errorType: retryMsg.error ?? "unknown",
+                  attempt: retryMsg.attempt ?? 0,
+                  maxRetries: retryMsg.max_retries ?? 0,
+                  retryDelayMs: retryMsg.retry_delay_ms ?? 0,
                 });
                 break;
               }
@@ -650,10 +632,6 @@ export class ClaudeAcpAgent implements Agent {
             session.accumulatedUsage.outputTokens += message.usage.output_tokens;
             session.accumulatedUsage.cachedReadTokens += message.usage.cache_read_input_tokens;
             session.accumulatedUsage.cachedWriteTokens += message.usage.cache_creation_input_tokens;
-            session.totalCostUsd = message.total_cost_usd;
-            if ("terminal_reason" in message && message.terminal_reason) {
-              session.lastTerminalReason = message.terminal_reason as string;
-            }
 
             const matchingModelUsage = lastAssistantModel
               ? getMatchingModelUsage(message.modelUsage, lastAssistantModel)
@@ -776,7 +754,7 @@ export class ClaudeAcpAgent implements Agent {
                 handedOff = true;
                 // the current loop stops with end_turn,
                 // the loop of the next prompt continues running
-                return { stopReason: "end_turn", usage: sessionUsage(session), _meta: sessionMeta(session) };
+                return { stopReason: "end_turn", usage: sessionUsage(session) };
               }
               if ("isReplay" in message && message.isReplay) {
                 // not pending or unrelated replay message
@@ -874,62 +852,45 @@ export class ClaudeAcpAgent implements Agent {
             break;
           }
           case "tool_progress": {
-            // Forward tool execution progress as a tool_call_update so clients
-            // can show elapsed time for long-running tools.
+            // Forward tool execution progress via extNotification so clients can
+            // show elapsed time for long-running tools without polluting tool output.
             const toolCallId = "tool_use_id" in message ? (message as any).tool_use_id : undefined;
             if (toolCallId) {
-              await this.client.sessionUpdate({
+              await this.client.extNotification("_claude/tool-progress", {
                 sessionId: params.sessionId,
-                update: {
-                  sessionUpdate: "tool_call_update",
-                  toolCallId,
-                  status: "running",
-                  content: [{
-                    type: "text",
-                    text: `Tool running (${Math.round((message as any).elapsed_time_seconds ?? 0)}s)...`,
-                  }],
-                },
+                toolCallId,
+                toolName: (message as any).tool_name ?? null,
+                elapsedTimeSeconds: (message as any).elapsed_time_seconds ?? 0,
               });
             }
             break;
           }
           case "tool_use_summary": {
-            // Forward collapsed tool-use summaries as agent message chunks
-            // so clients can display a high-level overview of tool activity.
+            // Forward collapsed tool-use summaries via extNotification so clients
+            // can display a high-level overview of tool activity.
             const summary = "summary" in message ? (message as any).summary : undefined;
             if (summary) {
-              await this.client.sessionUpdate({
+              await this.client.extNotification("_claude/tool-use-summary", {
                 sessionId: params.sessionId,
-                update: {
-                  sessionUpdate: "agent_message_chunk",
-                  content: { type: "text", text: summary },
-                },
+                summary,
               });
             }
             break;
           }
           case "rate_limit_event": {
-            // Forward rate limit info via _meta on a usage_update notification.
-            // This allows clients to detect approaching limits, rejections,
-            // and overage status without parsing error message strings.
+            // Forward rate limit info via extNotification so clients can detect
+            // approaching limits and rejections without parsing error message strings.
             const info = "rate_limit_info" in message ? (message as any).rate_limit_info : undefined;
             if (info) {
-              await this.client.sessionUpdate({
+              await this.client.extNotification("_claude/rate-limit", {
                 sessionId: params.sessionId,
-                _meta: {
-                  rateLimitStatus: info.status ?? "unknown",
-                  rateLimitResetsAt: info.resetsAt ?? null,
-                  rateLimitType: info.rateLimitType ?? null,
-                  rateLimitUtilization: info.utilization ?? null,
-                  overageStatus: info.overageStatus ?? null,
-                  overageDisabledReason: info.overageDisabledReason ?? null,
-                  isUsingOverage: info.isUsingOverage ?? false,
-                },
-                update: {
-                  sessionUpdate: "usage_update",
-                  used: lastAssistantTotalUsage ?? 0,
-                  size: lastContextWindowSize,
-                },
+                status: info.status ?? "unknown",
+                resetsAt: info.resetsAt ?? null,
+                rateLimitType: info.rateLimitType ?? null,
+                utilization: info.utilization ?? null,
+                overageStatus: info.overageStatus ?? null,
+                overageDisabledReason: info.overageDisabledReason ?? null,
+                isUsingOverage: info.isUsingOverage ?? false,
               });
             }
             break;
@@ -1633,8 +1594,6 @@ export class ClaudeAcpAgent implements Agent {
         cachedReadTokens: 0,
         cachedWriteTokens: 0,
       },
-      totalCostUsd: 0,
-      lastTerminalReason: null,
       modes,
       models,
       configOptions,
@@ -1665,18 +1624,6 @@ function sessionUsage(session: Session) {
       session.accumulatedUsage.cachedReadTokens +
       session.accumulatedUsage.cachedWriteTokens,
   };
-}
-
-/** Build _meta for PromptResponse with cost and terminal reason from SDK results */
-function sessionMeta(session: Session): Record<string, unknown> {
-  const meta: Record<string, unknown> = {};
-  if (session.totalCostUsd > 0) {
-    meta.costUsd = session.totalCostUsd;
-  }
-  if (session.lastTerminalReason) {
-    meta.terminalReason = session.lastTerminalReason;
-  }
-  return Object.keys(meta).length > 0 ? meta : {};
 }
 
 function createEnvForGateway(gatewayMeta?: GatewayAuthMeta) {
