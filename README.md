@@ -35,6 +35,11 @@ Enable wrapper mode for use with Claude Code wrappers that handle authentication
 
 **Requires `CLAUDE_CODE_EXECUTABLE` to be set.** The agent will throw an error on startup if `CLAUDE_CODE_CUSTOM_AUTH` is set without `CLAUDE_CODE_EXECUTABLE`.
 
+```bash                                                                                                                                                    
+CLAUDE_CODE_CUSTOM_AUTH=1                                                                                                                                
+CLAUDE_CODE_EXECUTABLE=/usr/local/bin/claude                                                                                                               
+```
+
 ## Contribution Policy
 
 This project does not require a Contributor License Agreement (CLA). Instead, contributions are accepted under the following terms:
