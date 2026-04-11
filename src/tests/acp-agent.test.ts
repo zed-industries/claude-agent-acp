@@ -1,5 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import { spawn, spawnSync } from "child_process";
+import { readFileSync } from "fs";
+import { fileURLToPath } from "url";
 import {
   Agent,
   AgentSideConnection,
@@ -1505,6 +1507,136 @@ describe("stop reason propagation", () => {
       backgroundTaskResult.usage.output_tokens + promptResult.usage.output_tokens,
     );
   });
+
+  it("does not let a stale idle from a cancelled turn complete the next prompt", async () => {
+    class RecordingClient {
+      receivedText = "";
+
+      async sessionUpdate(params: SessionNotification): Promise<void> {
+        if (
+          params.update.sessionUpdate === "agent_message_chunk" &&
+          params.update.content.type === "text"
+        ) {
+          this.receivedText += params.update.content.text;
+        }
+      }
+    }
+
+    const fakeCliPath = fileURLToPath(
+      new URL("./fixtures/fake-claude-cli-cancel-stale-idle.mjs", import.meta.url),
+    );
+    const fakeCliLogPath = `/tmp/fake-claude-cli-${randomUUID()}.log`;
+    const transportLog: string[] = [];
+    const client = new RecordingClient();
+    const agent = new ClaudeAcpAgent(client as unknown as AgentSideConnection, {
+      log: () => {},
+      error: () => {},
+    });
+
+    function debugContext() {
+      let fakeCliLog = "";
+      try {
+        fakeCliLog = readFileSync(fakeCliLogPath, "utf8");
+      } catch {
+        fakeCliLog = "<missing fake cli log>";
+      }
+
+      return `transport log:\n${transportLog.join("\n") || "<empty>"}\n\nfake cli log:\n${fakeCliLog}`;
+    }
+
+    async function withTimeout<T>(
+      label: string,
+      promise: Promise<T>,
+      timeoutMs = 2000,
+    ): Promise<T> {
+      return await Promise.race([
+        promise,
+        new Promise<T>((_, reject) => {
+          setTimeout(() => {
+            reject(new Error(`${label} timed out\n\n${debugContext()}`));
+          }, timeoutMs);
+        }),
+      ]);
+    }
+
+    await agent.initialize({
+      protocolVersion: 1,
+      clientCapabilities: {
+        fs: {
+          readTextFile: true,
+          writeTextFile: true,
+        },
+      },
+    });
+
+    const newSessionResponse = await withTimeout(
+      "newSession",
+      agent.newSession({
+        cwd: __dirname,
+        mcpServers: [],
+        _meta: {
+          claudeCode: {
+            options: {
+              pathToClaudeCodeExecutable: fakeCliPath,
+              env: {
+                FAKE_CLAUDE_CLI_LOG_PATH: fakeCliLogPath,
+              },
+              spawnClaudeCodeProcess: (options: any) => {
+                transportLog.push(
+                  `spawn ${options.command} ${Array.isArray(options.args) ? options.args.join(" ") : ""}`,
+                );
+                const child = spawn(options.command, options.args, {
+                  cwd: options.cwd,
+                  env: options.env,
+                  signal: options.signal,
+                  stdio: ["pipe", "pipe", "pipe"],
+                });
+                child.stdout.on("data", (chunk) => {
+                  transportLog.push(`stdout ${chunk.toString("utf8").trimEnd()}`);
+                });
+                child.stderr.on("data", (chunk) => {
+                  transportLog.push(`stderr ${chunk.toString("utf8").trimEnd()}`);
+                });
+
+                const originalWrite = child.stdin.write.bind(child.stdin);
+                child.stdin.write = ((chunk: any, ...args: any[]) => {
+                  transportLog.push(`stdin ${Buffer.from(chunk).toString("utf8").trimEnd()}`);
+                  return originalWrite(chunk, ...args);
+                }) as any;
+
+                return child as any;
+              },
+            },
+          },
+        },
+      }),
+    );
+
+    try {
+      const firstPrompt = agent.prompt({
+        prompt: [{ type: "text", text: "first prompt" }],
+        sessionId: newSessionResponse.sessionId,
+      });
+
+      await withTimeout("cancel", agent.cancel({ sessionId: newSessionResponse.sessionId }));
+
+      const secondResponse = await withTimeout(
+        "second prompt",
+        agent.prompt({
+          prompt: [{ type: "text", text: "second prompt" }],
+          sessionId: newSessionResponse.sessionId,
+        }),
+      );
+      const firstResponse = await withTimeout("first prompt", firstPrompt);
+
+      expect(firstResponse.stopReason).toBe("cancelled");
+      expect(secondResponse.stopReason).toBe("end_turn");
+      expect(secondResponse.usage?.totalTokens).toBe(8);
+      expect(client.receivedText).toContain("actual second prompt output");
+    } finally {
+      await agent.unstable_closeSession({ sessionId: newSessionResponse.sessionId });
+    }
+  }, 10000);
 
   it("should throw internal error for success with is_error true and no max_tokens", async () => {
     const agent = createMockAgent();
