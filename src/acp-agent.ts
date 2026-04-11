@@ -241,10 +241,10 @@ function shouldHideClaudeAuth(): boolean {
 }
 
 function shouldUseWrapperMode(): boolean {
-  if (process.env.CLAUDE_CODE_WRAPPER_MODE) {
+  if (process.env.CLAUDE_CODE_CUSTOM_AUTH) {
     if (!process.env.CLAUDE_CODE_EXECUTABLE) {
       throw new Error(
-        "CLAUDE_CODE_WRAPPER_MODE requires CLAUDE_CODE_EXECUTABLE to be set. " +
+        "CLAUDE_CODE_CUSTOM_AUTH requires CLAUDE_CODE_EXECUTABLE to be set. " +
         "Please configure CLAUDE_CODE_EXECUTABLE to point to your Claude Code wrapper executable " +
         "that handles authentication internally (e.g. enterprise SSO, API gateway). " +
         "Wrapper mode bypasses all ACP-level authentication, so the wrapper must provide its own.",
