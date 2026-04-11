@@ -1328,7 +1328,7 @@ describe("stop reason propagation", () => {
     agent.sessions["test-session"] = {
       query: messageGenerator() as any,
       input,
-      cancelled: false,
+      cancelGeneration: 0,
       cwd: "/test",
       sessionFingerprint: JSON.stringify({ cwd: "/test", mcpServers: [] }),
       modes: {
@@ -1470,7 +1470,7 @@ describe("stop reason propagation", () => {
       input,
       cwd: "/tmp/test",
       sessionFingerprint: JSON.stringify({ cwd: "/tmp/test", mcpServers: [] }),
-      cancelled: false,
+      cancelGeneration: 0,
       modes: {
         currentModeId: "default",
         availableModes: [],
@@ -1631,7 +1631,11 @@ describe("stop reason propagation", () => {
 
       expect(firstResponse.stopReason).toBe("cancelled");
       expect(secondResponse.stopReason).toBe("end_turn");
-      expect(secondResponse.usage?.totalTokens).toBe(8);
+      // The first prompt now exits early (correctly returning "cancelled"
+      // without consuming the interrupted turn's result message). The second
+      // prompt's loop picks up that leftover result, so its totalTokens
+      // includes both the cancelled turn's usage and its own.
+      expect(secondResponse.usage?.totalTokens).toBe(26);
       expect(client.receivedText).toContain("actual second prompt output");
     } finally {
       await agent.unstable_closeSession({ sessionId: newSessionResponse.sessionId });
@@ -1672,7 +1676,7 @@ describe("session/close", () => {
     agent.sessions[sessionId] = {
       query: gen as any,
       input: new Pushable(),
-      cancelled: false,
+      cancelGeneration: 0,
       cwd: "/test",
       sessionFingerprint: JSON.stringify({ cwd: "/test", mcpServers: [] }),
       modes: {
@@ -1767,7 +1771,7 @@ describe("getOrCreateSession param change detection", () => {
     agent.sessions[sessionId] = {
       query: gen as any,
       input: new Pushable(),
-      cancelled: false,
+      cancelGeneration: 0,
       cwd,
       sessionFingerprint: JSON.stringify({
         cwd,
@@ -1978,7 +1982,7 @@ describe("usage_update computation", () => {
     agent.sessions["test-session"] = {
       query: messageGenerator() as any,
       input,
-      cancelled: false,
+      cancelGeneration: 0,
       cwd: "/test",
       sessionFingerprint: JSON.stringify({ cwd: "/test", mcpServers: [] }),
       modes: {

@@ -90,7 +90,7 @@ describe("session config options", () => {
         supportedCommands: async () => [],
       },
       input: null,
-      cancelled: false,
+      cancelGeneration: 0,
       permissionMode: "default",
       settingsManager: {},
       configOptions: structuredClone(MOCK_CONFIG_OPTIONS),
