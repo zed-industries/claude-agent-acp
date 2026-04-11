@@ -240,6 +240,21 @@ function shouldHideClaudeAuth(): boolean {
   return process.argv.includes("--hide-claude-auth");
 }
 
+function shouldUseWrapperMode(): boolean {
+  if (process.env.CLAUDE_CODE_WRAPPER_MODE) {
+    if (!process.env.CLAUDE_CODE_EXECUTABLE) {
+      throw new Error(
+        "CLAUDE_CODE_WRAPPER_MODE requires CLAUDE_CODE_EXECUTABLE to be set. " +
+        "Please configure CLAUDE_CODE_EXECUTABLE to point to your Claude Code wrapper executable " +
+        "that handles authentication internally (e.g. enterprise SSO, API gateway). " +
+        "Wrapper mode bypasses all ACP-level authentication, so the wrapper must provide its own.",
+      );
+    }
+    return true;
+  }
+  return false;
+}
+
 // Bypass Permissions doesn't work if we are a root/sudo user
 const IS_ROOT = (process.geteuid?.() ?? process.getuid?.()) === 0;
 const ALLOW_BYPASS = !IS_ROOT || !!process.env.IS_SANDBOX;
@@ -425,12 +440,15 @@ export class ClaudeAcpAgent implements Agent {
         title: "Claude Agent",
         version: packageJson.version,
       },
-      authMethods: [...terminalAuthMethods, ...(supportsGatewayAuth ? [gatewayAuthMethod] : [])],
+      authMethods: shouldUseWrapperMode()
+        ? []
+        : [...terminalAuthMethods, ...(supportsGatewayAuth ? [gatewayAuthMethod] : [])],
     };
   }
 
   async newSession(params: NewSessionRequest): Promise<NewSessionResponse> {
     if (
+      !shouldUseWrapperMode() &&
       !this.gatewayAuthMeta &&
       fs.existsSync(path.resolve(os.homedir(), ".claude.json.backup")) &&
       !fs.existsSync(path.resolve(os.homedir(), ".claude.json"))
@@ -1533,6 +1551,7 @@ export class ClaudeAcpAgent implements Agent {
 
     if (
       shouldHideClaudeAuth() &&
+      !shouldUseWrapperMode() &&
       initializationResult.account.subscriptionType &&
       !this.gatewayAuthMeta
     ) {
