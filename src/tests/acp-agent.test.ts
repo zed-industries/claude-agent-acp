@@ -1349,6 +1349,7 @@ describe("stop reason propagation", () => {
       pendingMessages: new Map(),
       nextPendingOrder: 0,
       abortController: new AbortController(),
+      emitRawSDKMessages: false,
     };
   }
 
@@ -1489,6 +1490,7 @@ describe("stop reason propagation", () => {
       promptRunning: false,
       pendingMessages: new Map(),
       nextPendingOrder: 0,
+      emitRawSDKMessages: false,
     };
 
     const response = await agent.prompt({
@@ -1563,6 +1565,7 @@ describe("session/close", () => {
       pendingMessages: new Map(),
       nextPendingOrder: 0,
       abortController: new AbortController(),
+      emitRawSDKMessages: false,
     };
     return agent.sessions[sessionId]!;
   }
@@ -1655,6 +1658,7 @@ describe("getOrCreateSession param change detection", () => {
       pendingMessages: new Map(),
       nextPendingOrder: 0,
       abortController: new AbortController(),
+      emitRawSDKMessages: false,
     };
     return agent.sessions[sessionId]!;
   }
@@ -1869,6 +1873,7 @@ describe("usage_update computation", () => {
       pendingMessages: new Map(),
       nextPendingOrder: 0,
       abortController: new AbortController(),
+      emitRawSDKMessages: false,
     };
   }
 
@@ -2188,5 +2193,201 @@ describe("usage_update computation", () => {
     expect(usageUpdate).toBeDefined();
     // size should be 1000000 (Opus), not 200000 (the fallback if <synthetic> overrode the model)
     expect(usageUpdate.update.size).toBe(1000000);
+  });
+});
+
+describe("emitRawSDKMessages", () => {
+  function createMockAgentWithExtNotification() {
+    const updates: any[] = [];
+    const extNotifications: { method: string; params: any }[] = [];
+    const mockClient = {
+      sessionUpdate: async (notification: any) => {
+        updates.push(notification);
+      },
+      extNotification: async (method: string, params: any) => {
+        extNotifications.push({ method, params });
+      },
+    } as unknown as AgentSideConnection;
+    const agent = new ClaudeAcpAgent(mockClient, { log: () => {}, error: () => {} });
+    return { agent, updates, extNotifications };
+  }
+
+  function injectSession(
+    agent: ClaudeAcpAgent,
+    messages: any[],
+    emitRawSDKMessages: boolean | { type: string; subtype?: string }[],
+  ) {
+    const input = new Pushable<any>();
+    async function* messageGenerator() {
+      const iter = input[Symbol.asyncIterator]();
+      const { value: userMessage, done } = await iter.next();
+      if (!done && userMessage) {
+        yield {
+          type: "user",
+          message: userMessage.message,
+          parent_tool_use_id: null,
+          uuid: userMessage.uuid,
+          session_id: "test-session",
+          isReplay: true,
+        };
+      }
+      yield* messages;
+    }
+    agent.sessions["test-session"] = {
+      query: messageGenerator() as any,
+      input,
+      cancelled: false,
+      cwd: "/test",
+      sessionFingerprint: JSON.stringify({ cwd: "/test", mcpServers: [] }),
+      modes: { currentModeId: "default", availableModes: [] },
+      models: { currentModelId: "default", availableModels: [] },
+      settingsManager: { dispose: vi.fn() } as any,
+      accumulatedUsage: {
+        inputTokens: 0,
+        outputTokens: 0,
+        cachedReadTokens: 0,
+        cachedWriteTokens: 0,
+      },
+      configOptions: [],
+      promptRunning: false,
+      pendingMessages: new Map(),
+      nextPendingOrder: 0,
+      abortController: new AbortController(),
+      emitRawSDKMessages,
+    };
+  }
+
+  function createResultMessage() {
+    return {
+      type: "result" as const,
+      subtype: "success" as const,
+      is_error: false,
+      result: "",
+      errors: [],
+      stop_reason: "end_turn" as const,
+      cost_usd: 0,
+      duration_ms: 0,
+      duration_api_ms: 0,
+      num_turns: 1,
+      total_cost_usd: 0,
+      usage: {
+        input_tokens: 10,
+        output_tokens: 5,
+        cache_read_input_tokens: 0,
+        cache_creation_input_tokens: 0,
+      },
+      modelUsage: {},
+      permission_denials: [],
+      uuid: randomUUID(),
+      session_id: "test-session",
+    };
+  }
+
+  it("emits all raw messages when set to true", async () => {
+    const { agent, extNotifications } = createMockAgentWithExtNotification();
+    const systemMsg = {
+      type: "system",
+      subtype: "status",
+      status: "compacting",
+      session_id: "test-session",
+    };
+    injectSession(
+      agent,
+      [
+        systemMsg,
+        createResultMessage(),
+        { type: "system", subtype: "session_state_changed", state: "idle" },
+      ],
+      true,
+    );
+
+    await agent.prompt({ sessionId: "test-session", prompt: [{ type: "text", text: "test" }] });
+
+    // Should have emitted extNotifications for all messages (user replay + system + result + session_state_changed)
+    expect(extNotifications.length).toBeGreaterThanOrEqual(3);
+    expect(extNotifications.every((n) => n.method === "_claude/sdkMessage")).toBe(true);
+  });
+
+  it("does not emit when set to false", async () => {
+    const { agent, extNotifications } = createMockAgentWithExtNotification();
+    injectSession(
+      agent,
+      [
+        { type: "system", subtype: "status", status: "compacting", session_id: "test-session" },
+        createResultMessage(),
+        { type: "system", subtype: "session_state_changed", state: "idle" },
+      ],
+      false,
+    );
+
+    await agent.prompt({ sessionId: "test-session", prompt: [{ type: "text", text: "test" }] });
+
+    expect(extNotifications).toHaveLength(0);
+  });
+
+  it("emits only messages matching a filter array", async () => {
+    const { agent, extNotifications } = createMockAgentWithExtNotification();
+    injectSession(
+      agent,
+      [
+        { type: "system", subtype: "compact_boundary", session_id: "test-session" },
+        { type: "system", subtype: "status", status: "compacting", session_id: "test-session" },
+        createResultMessage(),
+        { type: "system", subtype: "session_state_changed", state: "idle" },
+      ],
+      [{ type: "system", subtype: "compact_boundary" }],
+    );
+
+    await agent.prompt({ sessionId: "test-session", prompt: [{ type: "text", text: "test" }] });
+
+    // Only the compact_boundary message should have been emitted
+    const sdkMessages = extNotifications.filter((n) => n.method === "_claude/sdkMessage");
+    expect(sdkMessages).toHaveLength(1);
+    expect(sdkMessages[0].params.sessionId).toBe("test-session");
+    expect(sdkMessages[0].params.message.type).toBe("system");
+    expect(sdkMessages[0].params.message.subtype).toBe("compact_boundary");
+  });
+
+  it("filter without subtype matches all messages of that type", async () => {
+    const { agent, extNotifications } = createMockAgentWithExtNotification();
+    injectSession(
+      agent,
+      [
+        { type: "system", subtype: "compact_boundary", session_id: "test-session" },
+        { type: "system", subtype: "status", status: "compacting", session_id: "test-session" },
+        createResultMessage(),
+        { type: "system", subtype: "session_state_changed", state: "idle" },
+      ],
+      [{ type: "system" }],
+    );
+
+    await agent.prompt({ sessionId: "test-session", prompt: [{ type: "text", text: "test" }] });
+
+    const sdkMessages = extNotifications.filter((n) => n.method === "_claude/sdkMessage");
+    // All system messages should match (compact_boundary + status + session_state_changed)
+    const systemMessages = sdkMessages.filter((n) => n.params.message.type === "system");
+    expect(systemMessages).toHaveLength(3);
+  });
+
+  it("supports multiple filters", async () => {
+    const { agent, extNotifications } = createMockAgentWithExtNotification();
+    injectSession(
+      agent,
+      [
+        { type: "system", subtype: "compact_boundary", session_id: "test-session" },
+        { type: "system", subtype: "status", status: "compacting", session_id: "test-session" },
+        createResultMessage(),
+        { type: "system", subtype: "session_state_changed", state: "idle" },
+      ],
+      [{ type: "system", subtype: "compact_boundary" }, { type: "result" }],
+    );
+
+    await agent.prompt({ sessionId: "test-session", prompt: [{ type: "text", text: "test" }] });
+
+    const sdkMessages = extNotifications.filter((n) => n.method === "_claude/sdkMessage");
+    expect(sdkMessages).toHaveLength(2);
+    expect(sdkMessages[0].params.message.type).toBe("system");
+    expect(sdkMessages[0].params.message.subtype).toBe("compact_boundary");
+    expect(sdkMessages[1].params.message.type).toBe("result");
   });
 });

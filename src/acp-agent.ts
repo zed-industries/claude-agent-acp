@@ -126,6 +126,7 @@ type Session = {
   pendingMessages: Map<string, { resolve: (cancelled: boolean) => void; order: number }>;
   nextPendingOrder: number;
   abortController: AbortController;
+  emitRawSDKMessages: boolean | SDKMessageFilter[];
 };
 
 /** Compute a stable fingerprint of the session-defining params so we can
@@ -151,6 +152,11 @@ type BackgroundTerminal =
       pendingOutput: TerminalOutputResponse;
     };
 
+export type SDKMessageFilter = {
+  type: string;
+  subtype?: string;
+};
+
 /**
  * Extra metadata that can be given when creating a new session.
  */
@@ -172,6 +178,14 @@ export type NewSessionMeta = {
      *   - tools (passed through; defaults to claude_code preset if not provided)
      */
     options?: Options;
+    /**
+     * When set, raw SDK messages are emitted as extNotification("_claude/sdkMessage", message)
+     * in addition to normal processing.
+     * - true: emit all messages
+     * - false/undefined: emit nothing (default)
+     * - SDKMessageFilter[]: emit only messages matching at least one filter
+     */
+    emitRawSDKMessages?: boolean | SDKMessageFilter[];
   };
   additionalRoots?: string[];
 };
@@ -573,6 +587,16 @@ export class ClaudeAcpAgent implements Agent {
             return { stopReason: "cancelled" };
           }
           break;
+        }
+
+        if (
+          session.emitRawSDKMessages &&
+          shouldEmitRawMessage(session.emitRawSDKMessages, message)
+        ) {
+          await this.client.extNotification("_claude/sdkMessage", {
+            sessionId: params.sessionId,
+            message: message as Record<string, unknown>,
+          });
         }
 
         switch (message.type) {
@@ -1607,6 +1631,7 @@ export class ClaudeAcpAgent implements Agent {
       pendingMessages: new Map(),
       nextPendingOrder: 0,
       abortController,
+      emitRawSDKMessages: sessionMeta?.claudeCode?.emitRawSDKMessages ?? false,
     };
 
     return {
@@ -1616,6 +1641,17 @@ export class ClaudeAcpAgent implements Agent {
       configOptions,
     };
   }
+}
+
+function shouldEmitRawMessage(
+  config: boolean | SDKMessageFilter[],
+  message: { type: string; subtype?: string },
+): boolean {
+  if (config === true) return true;
+  if (config === false) return false;
+  return config.some(
+    (f) => f.type === message.type && (f.subtype === undefined || f.subtype === message.subtype),
+  );
 }
 
 function sessionUsage(session: Session) {
