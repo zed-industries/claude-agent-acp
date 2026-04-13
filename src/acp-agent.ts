@@ -1554,7 +1554,8 @@ export class ClaudeAcpAgent implements Agent {
       if (
         creationOpts.resume &&
         error instanceof Error &&
-        error.message === "Query closed before response received"
+        (error.message === "Query closed before response received" ||
+          error.message.includes("No conversation found with session ID"))
       ) {
         throw RequestError.resourceNotFound(sessionId);
       }
