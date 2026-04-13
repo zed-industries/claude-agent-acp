@@ -339,13 +339,21 @@ export class ClaudeAcpAgent implements Agent {
 
     const supportsTerminalAuth = request.clientCapabilities?.auth?.terminal === true;
     const supportsMetaTerminalAuth = request.clientCapabilities?._meta?.["terminal-auth"] === true;
-    const noBrowser = !!process.env.NO_BROWSER;
 
-    // When NO_BROWSER is set (e.g. remote environments), fall back to the single
-    // terminal-only login that doesn't try to open a browser.
+    // Detect remote environments where the OAuth browser redirect to localhost
+    // won't work. This matches the SDK's internal isRemote check. In these cases,
+    // the `auth login` subcommand would fall back to a device-code-like manual
+    // flow, which doesn't work well over ACP, so we offer the TUI login instead.
+    const isRemote = !!(
+      process.env.NO_BROWSER ||
+      process.env.SSH_CONNECTION ||
+      process.env.SSH_CLIENT ||
+      process.env.SSH_TTY ||
+      process.env.CLAUDE_CODE_REMOTE
+    );
     const terminalAuthMethods: AuthMethod[] = [];
 
-    if (noBrowser) {
+    if (isRemote) {
       const remoteLoginMethod: AuthMethod = {
         description: "Run `claude /login` in the terminal",
         name: "Log in with Claude",
