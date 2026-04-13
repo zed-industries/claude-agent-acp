@@ -23,7 +23,7 @@ jobs:
           app-id: ${{ secrets.RELEASE_PLZ_APP_ID }}
           # GitHub App private key secret name
           private-key: ${{ secrets.RELEASE_PLZ_APP_PRIVATE_KEY }}
-      - uses: googleapis/release-please-action@16a9c90856f42705d54a6fda1823352bdc62cf38
+      - uses: googleapis/release-please-action@5c625bfb5d1ff62eadeeb3772007f7f66fdcf071
         id: release
         with:
           token: ${{ steps.generate-token.outputs.token }}
