@@ -11,7 +11,12 @@ import {
   BetaBashCodeExecutionToolResultBlockParam,
 } from "@anthropic-ai/sdk/resources/beta.mjs";
 import { toAcpNotifications, ToolUseCache, Logger } from "../acp-agent.js";
-import { toolUpdateFromToolResult, createPostToolUseHook, toolInfoFromToolUse, planEntries } from "../tools.js";
+import {
+  toolUpdateFromToolResult,
+  createPostToolUseHook,
+  toolInfoFromToolUse,
+  planEntries,
+} from "../tools.js";
 
 describe("rawOutput in tool call updates", () => {
   const mockClient = {} as AgentSideConnection;
@@ -1353,9 +1358,7 @@ describe("toAcpNotifications - TodoWrite with undefined input regression", () =>
     );
 
     // TodoWrite with undefined input should not crash, and should not emit plan update
-    const planUpdates = notifications.filter(
-      (n) => (n.update as any).sessionUpdate === "plan",
-    );
+    const planUpdates = notifications.filter((n) => (n.update as any).sessionUpdate === "plan");
     expect(planUpdates).toHaveLength(0);
   });
 
@@ -1378,9 +1381,7 @@ describe("toAcpNotifications - TodoWrite with undefined input regression", () =>
       mockLogger,
     );
 
-    const planUpdates = notifications.filter(
-      (n) => (n.update as any).sessionUpdate === "plan",
-    );
+    const planUpdates = notifications.filter((n) => (n.update as any).sessionUpdate === "plan");
     expect(planUpdates).toHaveLength(1);
   });
 });
