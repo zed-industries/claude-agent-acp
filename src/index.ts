@@ -24,12 +24,15 @@ if (process.argv.includes("--cli")) {
     console.error("Unhandled Rejection at:", promise, "reason:", reason);
   });
 
-  const connection = runAcp();
+  const { connection, agent } = runAcp();
 
-  // Exit cleanly when the ACP connection closes (stdin EOF from client).
-  // Without this, `process.stdin.resume()` keeps the event loop alive
-  // indefinitely, causing orphan process accumulation in oneshot mode.
-  connection.closed.then(() => {
+  // Exit cleanly when the ACP connection closes (e.g. stdin EOF, transport
+  // error). Without this, `process.stdin.resume()` keeps the event loop
+  // alive indefinitely, causing orphan process accumulation in oneshot mode.
+  connection.closed.then(async () => {
+    await agent.dispose().catch((err) => {
+      console.error("Error during cleanup:", err);
+    });
     process.exit(0);
   });
 
