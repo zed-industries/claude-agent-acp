@@ -24,8 +24,18 @@ if (process.argv.includes("--cli")) {
     console.error("Unhandled Rejection at:", promise, "reason:", reason);
   });
 
-  runAcp();
+  const { connection, agent } = runAcp();
 
-  // Keep process alive
+  // Exit cleanly when the ACP connection closes (e.g. stdin EOF, transport
+  // error). Without this, `process.stdin.resume()` keeps the event loop
+  // alive indefinitely, causing orphan process accumulation in oneshot mode.
+  connection.closed.then(async () => {
+    await agent.dispose().catch((err) => {
+      console.error("Error during cleanup:", err);
+    });
+    process.exit(0);
+  });
+
+  // Keep process alive while connection is open
   process.stdin.resume();
 }

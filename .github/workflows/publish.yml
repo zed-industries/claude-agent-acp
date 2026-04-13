@@ -16,14 +16,14 @@ jobs:
       # Generating a GitHub token, so that PRs and tags created by
       # the release-please-action can trigger actions workflows.
       - name: Generate GitHub token
-        uses: actions/create-github-app-token@f8d387b68d61c58ab83c6c016672934102569859
+        uses: actions/create-github-app-token@1b10c78c7865c340bc4f6099eb2f838309f1e8c3
         id: generate-token
         with:
           # GitHub App ID secret name
           app-id: ${{ secrets.RELEASE_PLZ_APP_ID }}
           # GitHub App private key secret name
           private-key: ${{ secrets.RELEASE_PLZ_APP_PRIVATE_KEY }}
-      - uses: googleapis/release-please-action@16a9c90856f42705d54a6fda1823352bdc62cf38
+      - uses: googleapis/release-please-action@5c625bfb5d1ff62eadeeb3772007f7f66fdcf071
         id: release
         with:
           token: ${{ steps.generate-token.outputs.token }}
@@ -100,7 +100,7 @@ jobs:
           fi
 
       - name: Upload artifact
-        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: ${{ matrix.archive }}
           path: ${{ matrix.archive }}
