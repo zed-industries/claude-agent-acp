@@ -128,7 +128,7 @@ export function toolInfoFromToolUse(
   switch (name) {
     case "Agent":
     case "Task": {
-      const input = toolUse.input as AgentInput | BashInput;
+      const input = toolUse.input as AgentInput | BashInput | undefined;
       return {
         title: input?.description ? input.description : "Task",
         kind: "think",
@@ -145,7 +145,7 @@ export function toolInfoFromToolUse(
     }
 
     case "Bash": {
-      const input = toolUse.input as BashInput;
+      const input = toolUse.input as BashInput | undefined;
       return {
         title: input?.command ? input.command : "Terminal",
         kind: "execute",
@@ -187,7 +187,7 @@ export function toolInfoFromToolUse(
     }
 
     case "Write": {
-      const input = toolUse.input as FileWriteInput;
+      const input = toolUse.input as FileWriteInput | undefined;
       let content: ToolCallContent[] = [];
       if (input && input.file_path) {
         content = [
@@ -216,7 +216,7 @@ export function toolInfoFromToolUse(
     }
 
     case "Edit": {
-      const input = toolUse.input as FileEditInput;
+      const input = toolUse.input as FileEditInput | undefined;
       let content: ToolCallContent[] = [];
       if (input && input.file_path && (input.old_string || input.new_string)) {
         content = [
@@ -357,7 +357,7 @@ export function toolInfoFromToolUse(
     }
 
     case "TodoWrite": {
-      const input = toolUse.input as TodoWriteInput;
+      const input = toolUse.input as TodoWriteInput | undefined;
       return {
         title: Array.isArray(input?.todos)
           ? `Update TODOs: ${input.todos.map((todo: any) => todo.content).join(", ")}`
@@ -368,7 +368,7 @@ export function toolInfoFromToolUse(
     }
 
     case "ExitPlanMode": {
-      const planInput = toolUse.input as { plan?: string };
+      const planInput = toolUse.input as { plan?: string } | undefined;
       return {
         title: "Ready to code?",
         kind: "switch_mode",
@@ -662,9 +662,9 @@ export type ClaudePlanEntry = {
 };
 
 export function planEntries(input: { todos: ClaudePlanEntry[] } | undefined): PlanEntry[] {
-  return (input?.todos ?? []).map((input) => ({
-    content: input.content,
-    status: input.status,
+  return (input?.todos ?? []).map((todo) => ({
+    content: todo.content,
+    status: todo.status,
     priority: "medium",
   }));
 }
