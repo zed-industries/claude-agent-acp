@@ -669,6 +669,7 @@ export class ClaudeAcpAgent implements Agent {
               case "task_started":
               case "task_notification":
               case "task_progress":
+              case "task_updated":
               case "elicitation_complete":
               case "api_retry":
                 // Todo: process via status api: https://docs.claude.com/en/docs/claude-code/hooks#hook-output
@@ -2193,6 +2194,7 @@ export function toAcpNotifications(
       case "container_upload":
       case "compaction":
       case "compaction_delta":
+      case "advisor_tool_result":
         break;
 
       default:
