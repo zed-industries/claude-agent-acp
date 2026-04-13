@@ -960,9 +960,7 @@ export class ClaudeAcpAgent implements Agent {
 
   /** Tear down all active sessions. Called when the ACP connection closes. */
   async dispose(): Promise<void> {
-    await Promise.all(
-      Object.keys(this.sessions).map((id) => this.teardownSession(id)),
-    );
+    await Promise.all(Object.keys(this.sessions).map((id) => this.teardownSession(id)));
   }
 
   async unstable_closeSession(params: CloseSessionRequest): Promise<CloseSessionResponse> {
