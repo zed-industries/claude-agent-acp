@@ -1538,7 +1538,7 @@ describe("session/close", () => {
 
   function injectSession(agent: ClaudeAcpAgent, sessionId: string) {
     function* empty() {}
-    const gen = Object.assign(empty(), { interrupt: vi.fn() });
+    const gen = Object.assign(empty(), { interrupt: vi.fn(), close: vi.fn() });
     agent.sessions[sessionId] = {
       query: gen as any,
       input: new Pushable(),
@@ -1633,6 +1633,7 @@ describe("getOrCreateSession param change detection", () => {
     function* empty() {}
     const gen = Object.assign(empty(), {
       interrupt: vi.fn(),
+      close: vi.fn(),
       supportedCommands: vi.fn().mockResolvedValue([]),
     });
     agent.sessions[sessionId] = {
