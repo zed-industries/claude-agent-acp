@@ -2002,8 +2002,8 @@ export function toAcpNotifications(
         const alreadyCached = chunk.id in toolUseCache;
         toolUseCache[chunk.id] = chunk;
         if (chunk.name === "TodoWrite") {
-          // @ts-expect-error - sometimes input is empty object
-          if (Array.isArray(chunk.input.todos)) {
+          // @ts-expect-error - sometimes input is empty object or undefined
+          if (Array.isArray(chunk.input?.todos)) {
             update = {
               sessionUpdate: "plan",
               entries: planEntries(chunk.input as { todos: ClaudePlanEntry[] }),
