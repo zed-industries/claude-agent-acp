@@ -968,7 +968,7 @@ export class ClaudeAcpAgent implements Agent {
   async cancel(params: CancelNotification): Promise<void> {
     const session = this.sessions[params.sessionId];
     if (!session) {
-      throw new Error("Session not found");
+      return;
     }
     session.cancelled = true;
     for (const [, pending] of session.pendingMessages) {
@@ -988,6 +988,7 @@ export class ClaudeAcpAgent implements Agent {
     await this.cancel({ sessionId });
     session.settingsManager.dispose();
     session.abortController.abort();
+    session.query.close();
     delete this.sessions[sessionId];
   }
 

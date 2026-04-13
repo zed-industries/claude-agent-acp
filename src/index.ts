@@ -26,15 +26,20 @@ if (process.argv.includes("--cli")) {
 
   const { connection, agent } = runAcp();
 
-  // Exit cleanly when the ACP connection closes (e.g. stdin EOF, transport
-  // error). Without this, `process.stdin.resume()` keeps the event loop
-  // alive indefinitely, causing orphan process accumulation in oneshot mode.
-  connection.closed.then(async () => {
+  async function shutdown() {
     await agent.dispose().catch((err) => {
       console.error("Error during cleanup:", err);
     });
     process.exit(0);
-  });
+  }
+
+  // Exit cleanly when the ACP connection closes (e.g. stdin EOF, transport
+  // error). Without this, `process.stdin.resume()` keeps the event loop
+  // alive indefinitely, causing orphan process accumulation in oneshot mode.
+  connection.closed.then(shutdown);
+
+  process.on("SIGTERM", shutdown);
+  process.on("SIGINT", shutdown);
 
   // Keep process alive while connection is open
   process.stdin.resume();
