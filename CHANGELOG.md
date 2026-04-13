@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.27.0](https://github.com/agentclientprotocol/claude-agent-acp/compare/v0.26.0...v0.27.0) (2026-04-13)
+
+
+### Features
+
+* allow clients to opt into receiving raw SDK messages ([#527](https://github.com/agentclientprotocol/claude-agent-acp/issues/527)) ([403a668](https://github.com/agentclientprotocol/claude-agent-acp/commit/403a668078c067868062ed26cd4d3e36665b66b6))
+* Update to claude-agent-sdk 0.2.104 ([#537](https://github.com/agentclientprotocol/claude-agent-acp/issues/537)) ([6811943](https://github.com/agentclientprotocol/claude-agent-acp/commit/6811943f57ef08616be633a8197223d4072663cf))
+
+
+### Bug Fixes
+
+* Allow auto mode after plan mode and send description for auto mode ([#528](https://github.com/agentclientprotocol/claude-agent-acp/issues/528)) ([fb9aced](https://github.com/agentclientprotocol/claude-agent-acp/commit/fb9aced3151c40694f1f01fd95665c4f5d90eb67))
+* Better remote check for auth methods ([#538](https://github.com/agentclientprotocol/claude-agent-acp/issues/538)) ([93f58c0](https://github.com/agentclientprotocol/claude-agent-acp/commit/93f58c0d2fcf7365c7ca5a6e52f56663e2065ddb))
+* better shutdown logic ([#543](https://github.com/agentclientprotocol/claude-agent-acp/issues/543)) ([9fb631f](https://github.com/agentclientprotocol/claude-agent-acp/commit/9fb631f5d76a5c5f6f0a1b61bdef05fe368c754c))
+* exit process when ACP connection closes ([#530](https://github.com/agentclientprotocol/claude-agent-acp/issues/530)) ([5c81e99](https://github.com/agentclientprotocol/claude-agent-acp/commit/5c81e99fe5ccdf774819b7ff3a2bc78a6519d730))
+* guard tool info rendering when tool_use input is undefined ([#536](https://github.com/agentclientprotocol/claude-agent-acp/issues/536)) ([d627b8c](https://github.com/agentclientprotocol/claude-agent-acp/commit/d627b8c5e95be31ac03923ef67d91748ec8564c5))
+* Remove backup auth check from new session ([#544](https://github.com/agentclientprotocol/claude-agent-acp/issues/544)) ([32b16c1](https://github.com/agentclientprotocol/claude-agent-acp/commit/32b16c1ad99394238b0e5cd6c2f761c12debe142))
+
 ## [0.26.0](https://github.com/agentclientprotocol/claude-agent-acp/compare/v0.25.3...v0.26.0) (2026-04-08)
 
 
