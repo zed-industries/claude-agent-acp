@@ -124,11 +124,15 @@ export function toolInfoFromToolUse(
   cwd?: string,
 ): ToolInfo {
   const name = toolUse.name;
+  // During streaming on Linux, toolUse.input can arrive as undefined due to
+  // chunk timing differences (macOS is unaffected). Normalize to empty object
+  // so downstream optional-chaining and null checks work correctly.
+  const inputObj = toolUse.input ?? {};
 
   switch (name) {
     case "Agent":
     case "Task": {
-      const input = toolUse.input as AgentInput | BashInput | undefined;
+      const input = inputObj as AgentInput | BashInput | undefined;
       return {
         title: input?.description ? input.description : "Task",
         kind: "think",
@@ -145,7 +149,7 @@ export function toolInfoFromToolUse(
     }
 
     case "Bash": {
-      const input = toolUse.input as BashInput | undefined;
+      const input = inputObj as BashInput | undefined;
       return {
         title: input?.command ? input.command : "Terminal",
         kind: "execute",
@@ -163,7 +167,7 @@ export function toolInfoFromToolUse(
     }
 
     case "Read": {
-      const input = toolUse.input as FileReadInput | undefined;
+      const input = inputObj as FileReadInput | undefined;
       let limit = "";
       if (input?.limit && input.limit > 0) {
         limit = " (" + (input.offset ?? 1) + " - " + ((input.offset ?? 1) + input.limit - 1) + ")";
@@ -187,7 +191,7 @@ export function toolInfoFromToolUse(
     }
 
     case "Write": {
-      const input = toolUse.input as FileWriteInput | undefined;
+      const input = inputObj as FileWriteInput | undefined;
       let content: ToolCallContent[] = [];
       if (input && input.file_path) {
         content = [
@@ -216,7 +220,7 @@ export function toolInfoFromToolUse(
     }
 
     case "Edit": {
-      const input = toolUse.input as FileEditInput | undefined;
+      const input = inputObj as FileEditInput | undefined;
       let content: ToolCallContent[] = [];
       if (input && input.file_path && (input.old_string || input.new_string)) {
         content = [
@@ -238,7 +242,7 @@ export function toolInfoFromToolUse(
     }
 
     case "Glob": {
-      const input = toolUse.input as GlobInput | undefined;
+      const input = inputObj as GlobInput | undefined;
       let label = "Find";
       if (input?.path) {
         label += ` \`${input.path}\``;
@@ -255,7 +259,7 @@ export function toolInfoFromToolUse(
     }
 
     case "Grep": {
-      const input = toolUse.input as GrepInput | undefined;
+      const input = inputObj as GrepInput | undefined;
       let label = "grep";
 
       if (input?.["-i"]) {
@@ -321,7 +325,7 @@ export function toolInfoFromToolUse(
     }
 
     case "WebFetch": {
-      const input = toolUse.input as WebFetchInput;
+      const input = inputObj as WebFetchInput;
       return {
         title: input?.url ? `Fetch ${input.url}` : "Fetch",
         kind: "fetch",
@@ -338,7 +342,7 @@ export function toolInfoFromToolUse(
     }
 
     case "WebSearch": {
-      const input = toolUse.input as WebSearchInput | undefined;
+      const input = inputObj as WebSearchInput | undefined;
       let label = input?.query ? `"${input.query}"` : "Web search";
 
       if (input?.allowed_domains && input.allowed_domains.length > 0) {
@@ -357,7 +361,7 @@ export function toolInfoFromToolUse(
     }
 
     case "TodoWrite": {
-      const input = toolUse.input as TodoWriteInput | undefined;
+      const input = inputObj as TodoWriteInput | undefined;
       return {
         title: Array.isArray(input?.todos)
           ? `Update TODOs: ${input.todos.map((todo: any) => todo.content).join(", ")}`
@@ -368,7 +372,7 @@ export function toolInfoFromToolUse(
     }
 
     case "ExitPlanMode": {
-      const planInput = toolUse.input as { plan?: string } | undefined;
+      const planInput = inputObj as { plan?: string } | undefined;
       return {
         title: "Ready to code?",
         kind: "switch_mode",
@@ -379,7 +383,7 @@ export function toolInfoFromToolUse(
     }
 
     case "Other": {
-      const input = toolUse.input;
+      const input = inputObj;
       let output;
       try {
         output = JSON.stringify(input, null, 2);
