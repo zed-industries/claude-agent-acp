@@ -79,6 +79,18 @@ import { nodeToWebReadable, nodeToWebWritable, Pushable, unreachable } from "./u
 export const CLAUDE_CONFIG_DIR =
   process.env.CLAUDE_CONFIG_DIR ?? path.join(os.homedir(), ".claude");
 
+/**
+ * Extract a bare UUID from an ACP session key.
+ *
+ * ACP callers pass session keys in the form `agent:claude:acp:<UUID>`.
+ * Claude Code only accepts bare UUIDs for --session-id and --resume, so
+ * we strip the prefix by taking the last colon-separated segment.
+ * If the key is already a bare UUID (no colons), it is returned unchanged.
+ */
+export function extractSessionUUID(sessionKey: string): string {
+  return sessionKey.split(":").pop() ?? sessionKey;
+}
+
 const MAX_TITLE_LENGTH = 256;
 
 function sanitizeTitle(text: string): string {
@@ -1378,7 +1390,7 @@ export class ClaudeAcpAgent implements Agent {
         _meta: params._meta,
       },
       {
-        resume: params.sessionId,
+        resume: extractSessionUUID(params.sessionId),
       },
     );
 
@@ -1400,7 +1412,7 @@ export class ClaudeAcpAgent implements Agent {
     if (creationOpts.forkSession) {
       sessionId = randomUUID();
     } else if (creationOpts.resume) {
-      sessionId = creationOpts.resume;
+      sessionId = extractSessionUUID(creationOpts.resume);
     } else {
       sessionId =
         (params._meta as NewSessionMeta | undefined)?.claudeCode?.options?.proposedSessionId ??
@@ -1546,8 +1558,87 @@ export class ClaudeAcpAgent implements Agent {
       ...(sessionMeta?.additionalRoots ?? []),
     ];
 
-    if (creationOpts?.resume === undefined || creationOpts?.forkSession) {
-      // Set our own session id if not resuming an existing session.
+    // Always fix up options.resume to use a bare UUID (the spread of creationOpts
+    // above may have set options.resume to a full ACP key like agent:claude:acp:<UUID>).
+    if (options.resume) {
+      options.resume = extractSessionUUID(options.resume as string);
+    }
+
+    if (creationOpts?.resume) {
+      // RESUME: Claude Code rejects --resume + --session-id together (exits immediately).
+      //   • File at expected path  → --resume UUID alone → Claude Code loads history ✓
+      //   • File in different dir  → override cwd to original → --resume UUID alone ✓
+      //     (handles cwd mismatch, e.g. oneshot sessions created with cwd=/tmp)
+      //   • File not found         → --resume UUID + --session-id UUID → conflict
+      //                              → resourceNotFound → acpx falls back to session/new
+      const { existsSync, readdirSync, readFileSync } = await import("node:fs");
+      const projectDir = params.cwd.replace(/\//g, "-");
+      const expectedPath = path.join(CLAUDE_CONFIG_DIR, "projects", projectDir, `${sessionId}.jsonl`);
+
+      if (!existsSync(expectedPath)) {
+        // Not at expected path: search all project dirs (handles cwd mismatch,
+        // e.g. oneshot sessions with cwd=/tmp resumed from workspace cwd).
+        let overrideCwd: string | null = null;
+        try {
+          const projectsDir = path.join(CLAUDE_CONFIG_DIR, "projects");
+          for (const entry of readdirSync(projectsDir, { withFileTypes: true }) as { name: string; isDirectory: () => boolean }[]) {
+            const candidatePath = path.join(projectsDir, entry.name, `${sessionId}.jsonl`);
+            if (
+              entry.isDirectory() &&
+              entry.name !== projectDir &&
+              existsSync(candidatePath)
+            ) {
+              // Read the original cwd from the JSONL session file.
+              // Claude Code writes cwd on every message line; scan until we find it.
+              // This avoids the lossy dir-name decode (e.g. '-home-user-my-project'
+              // would decode to '/home/user/my/project', corrupting hyphenated paths).
+              let recoveredCwd: string | undefined;
+              try {
+                const content = readFileSync(candidatePath, "utf8");
+                for (const line of content.split("\n")) {
+                  if (!line.trim()) continue;
+                  const parsed = JSON.parse(line) as Record<string, unknown>;
+                  if (typeof parsed.cwd === "string") {
+                    recoveredCwd = parsed.cwd;
+                    break;
+                  }
+                }
+              } catch {
+                /* ignore parse errors — fall through to dir-name decode */
+              }
+
+              if (recoveredCwd !== undefined) {
+                overrideCwd = recoveredCwd;
+              } else {
+                // Fallback: decode dir name (lossy for paths containing hyphens).
+                // e.g. /home/user/my-project → -home-user-my-project → /home/user/my/project (wrong).
+                // For the common case (cwd=/tmp → -tmp), this works correctly.
+                const decoded = entry.name.replace(/-/g, "/");
+                if (existsSync(decoded)) {
+                  overrideCwd = decoded;
+                }
+              }
+              break;
+            }
+          }
+        } catch {
+          /* projects dir may not exist yet */
+        }
+
+        if (overrideCwd !== null) {
+          // Found in different dir: use original cwd so Claude Code finds the file.
+          options.cwd = overrideCwd;
+        } else {
+          // Not found anywhere: force conflict so acpx falls back to session/new.
+          options.sessionId = sessionId;
+        }
+      }
+      // File found at expected path: omit --session-id so --resume UUID alone restores history.
+    } else if (creationOpts?.forkSession) {
+      // Fork: pin the new session UUID.
+      options.sessionId = sessionId;
+    } else {
+      // New session: pin the proposed or random UUID.
       options.sessionId = sessionId;
     }
 
