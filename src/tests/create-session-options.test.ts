@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { AgentSideConnection, SessionNotification } from "@agentclientprotocol/sdk";
 import type { Options } from "@anthropic-ai/claude-agent-sdk";
-import type { ClaudeAcpAgent as ClaudeAcpAgentType } from "../acp-agent.js";
+import type { ClaudeAcpAgent as ClaudeAcpAgentType, NewSessionMeta } from "../acp-agent.js";
 
 let capturedOptions: Options | undefined;
 vi.mock("@anthropic-ai/claude-agent-sdk", async () => {
@@ -283,5 +283,63 @@ describe("createSession options merging", () => {
     expect(capturedOptions!.mcpServers).toHaveProperty("user-server");
     // ACP-provided MCP server should also be present
     expect(capturedOptions!.mcpServers).toHaveProperty("acp-server");
+  });
+});
+
+describe("proposedSessionId in _meta", () => {
+  let agent: ClaudeAcpAgentType;
+  let ClaudeAcpAgent: typeof ClaudeAcpAgentType;
+
+  function createMockClient(): AgentSideConnection {
+    return {
+      sessionUpdate: async (_notification: SessionNotification) => {},
+      requestPermission: async () => ({ outcome: { outcome: "cancelled" } }),
+      readTextFile: async () => ({ content: "" }),
+      writeTextFile: async () => ({}),
+    } as unknown as AgentSideConnection;
+  }
+
+  beforeEach(async () => {
+    capturedOptions = undefined;
+
+    vi.resetModules();
+    const acpAgent = await import("../acp-agent.js");
+    ClaudeAcpAgent = acpAgent.ClaudeAcpAgent;
+
+    agent = new ClaudeAcpAgent(createMockClient());
+  });
+
+  it("uses proposedSessionId from _meta when provided", async () => {
+    const proposedId = "11111111-1111-1111-1111-111111111111";
+
+    const result = await agent.newSession({
+      cwd: "/test",
+      mcpServers: [],
+      // Type cast needed because NewSessionRequest._meta is typed as
+      // { [key: string]: unknown }, so we cast to NewSessionMeta to satisfy
+      // the value type while retaining full type safety for the meta shape.
+      _meta: {
+        claudeCode: {
+          options: {
+            proposedSessionId: proposedId,
+          },
+        },
+      } as NewSessionMeta,
+    });
+
+    expect(result.sessionId).toBe(proposedId);
+    expect(capturedOptions!.sessionId).toBe(proposedId);
+  });
+
+  it("generates a random session ID when proposedSessionId is absent", async () => {
+    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+    const result = await agent.newSession({
+      cwd: "/test",
+      mcpServers: [],
+    });
+
+    expect(result.sessionId).toMatch(uuidRegex);
+    expect(capturedOptions!.sessionId).toBe(result.sessionId);
   });
 });

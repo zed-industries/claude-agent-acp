@@ -175,8 +175,17 @@ export type NewSessionMeta = {
      *   - mcpServers (merged with ACP's mcpServers)
      *   - disallowedTools (merged with ACP's disallowedTools)
      *   - tools (passed through; defaults to claude_code preset if not provided)
+     * ACP-specific extension (not forwarded to the SDK):
+     *   - proposedSessionId: if set, used as the session ID instead of a random UUID
      */
-    options?: Options;
+    options?: Options & {
+      /**
+       * If provided, use this UUID as the session ID instead of generating a random one.
+       * Allows ACP clients to request a deterministic, predictable session file name,
+       * which is required for reliable session resume (e.g. acpx resume flows).
+       */
+      proposedSessionId?: string;
+    };
     /**
      * When set, raw SDK messages are emitted as extNotification("_claude/sdkMessage", message)
      * in addition to normal processing.
@@ -1393,7 +1402,9 @@ export class ClaudeAcpAgent implements Agent {
     } else if (creationOpts.resume) {
       sessionId = creationOpts.resume;
     } else {
-      sessionId = randomUUID();
+      sessionId =
+        (params._meta as NewSessionMeta | undefined)?.claudeCode?.options?.proposedSessionId ??
+        randomUUID();
     }
 
     const input = new Pushable<SDKUserMessage>();
