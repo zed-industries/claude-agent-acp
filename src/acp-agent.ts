@@ -115,12 +115,14 @@ type UsageSnapshot = {
   cache_creation_input_tokens: number;
 };
 
-const ZERO_USAGE: UsageSnapshot = {
+const ZERO_USAGE: Readonly<UsageSnapshot> = Object.freeze({
   input_tokens: 0,
   output_tokens: 0,
   cache_read_input_tokens: 0,
   cache_creation_input_tokens: 0,
-};
+});
+
+const DEFAULT_CONTEXT_WINDOW = 200000;
 
 type Session = {
   query: Query;
@@ -140,6 +142,12 @@ type Session = {
   nextPendingOrder: number;
   abortController: AbortController;
   emitRawSDKMessages: boolean | SDKMessageFilter[];
+  /** Context window size of the last top-level assistant model, carried across
+   *  prompts so mid-stream usage_update notifications report a correct `size`
+   *  before the turn's first result message arrives. Defaults to
+   *  DEFAULT_CONTEXT_WINDOW, refreshed from each result's modelUsage, and
+   *  invalidated when the user switches the session's model. */
+  contextWindowSize: number;
 };
 
 /** Compute a stable fingerprint of the session-defining params so we can
@@ -561,7 +569,6 @@ export class ClaudeAcpAgent implements Agent {
     let lastAssistantTotalUsage: number | null = null;
     let lastAssistantUsage: UsageSnapshot | null = null;
     let lastAssistantModel: string | null = null;
-    let lastContextWindowSize: number = 200000;
 
     const userMessage = promptToClaude(params);
 
@@ -648,7 +655,7 @@ export class ClaudeAcpAgent implements Agent {
                   update: {
                     sessionUpdate: "usage_update",
                     used: 0,
-                    size: lastContextWindowSize,
+                    size: session.contextWindowSize,
                   },
                 });
                 await this.client.sessionUpdate({
@@ -706,8 +713,7 @@ export class ClaudeAcpAgent implements Agent {
             const matchingModelUsage = lastAssistantModel
               ? getMatchingModelUsage(message.modelUsage, lastAssistantModel)
               : null;
-            const contextWindowSize = matchingModelUsage?.contextWindow ?? 200000;
-            lastContextWindowSize = contextWindowSize;
+            session.contextWindowSize = matchingModelUsage?.contextWindow ?? DEFAULT_CONTEXT_WINDOW;
 
             // Send usage_update notification
             if (lastAssistantTotalUsage !== null) {
@@ -716,7 +722,7 @@ export class ClaudeAcpAgent implements Agent {
                 update: {
                   sessionUpdate: "usage_update",
                   used: lastAssistantTotalUsage,
-                  size: contextWindowSize,
+                  size: session.contextWindowSize,
                   cost: {
                     amount: message.total_cost_usd,
                     currency: "USD",
@@ -795,31 +801,40 @@ export class ClaudeAcpAgent implements Agent {
                 const usage = message.event.message.usage;
                 lastAssistantUsage = usage
                   ? {
-                      input_tokens: usage.input_tokens ?? 0,
-                      output_tokens: usage.output_tokens ?? 0,
+                      input_tokens: usage.input_tokens,
+                      output_tokens: usage.output_tokens,
                       cache_read_input_tokens: usage.cache_read_input_tokens ?? 0,
                       cache_creation_input_tokens: usage.cache_creation_input_tokens ?? 0,
                     }
                   : null;
-                if (
-                  message.event.message.model &&
-                  message.event.message.model !== "<synthetic>"
-                ) {
-                  lastAssistantModel = message.event.message.model;
+                const model = message.event.message.model;
+                if (model && model !== "<synthetic>") {
+                  lastAssistantModel = model;
+                  // Only upgrade from the default — once a `result` has given
+                  // us an authoritative window, trust it over the heuristic.
+                  // Model switches invalidate the cached window via
+                  // `syncSessionConfigState`, which resets us back to the
+                  // default so this branch runs again for the new model.
+                  if (session.contextWindowSize === DEFAULT_CONTEXT_WINDOW) {
+                    const inferred = inferContextWindowFromModel(model);
+                    if (inferred !== null) {
+                      session.contextWindowSize = inferred;
+                    }
+                  }
                 }
               } else if (message.event.type === "message_delta") {
-                const usage = message.event.usage as Partial<UsageSnapshot> | undefined;
-                if (usage) {
-                  const prev: UsageSnapshot = lastAssistantUsage ?? ZERO_USAGE;
-                  lastAssistantUsage = {
-                    input_tokens: usage.input_tokens ?? prev.input_tokens,
-                    output_tokens: usage.output_tokens ?? prev.output_tokens,
-                    cache_read_input_tokens:
-                      usage.cache_read_input_tokens ?? prev.cache_read_input_tokens,
-                    cache_creation_input_tokens:
-                      usage.cache_creation_input_tokens ?? prev.cache_creation_input_tokens,
-                  };
-                }
+                const usage = message.event.usage;
+                const prev: Readonly<UsageSnapshot> = lastAssistantUsage ?? ZERO_USAGE;
+                // Per Anthropic API, message_delta usage fields are *cumulative*
+                // and may be null when unreported — fall back to prior snapshot.
+                lastAssistantUsage = {
+                  input_tokens: usage.input_tokens ?? prev.input_tokens,
+                  output_tokens: usage.output_tokens ?? prev.output_tokens,
+                  cache_read_input_tokens:
+                    usage.cache_read_input_tokens ?? prev.cache_read_input_tokens,
+                  cache_creation_input_tokens:
+                    usage.cache_creation_input_tokens ?? prev.cache_creation_input_tokens,
+                };
               }
 
               const nextUsage = lastAssistantUsage ? totalTokens(lastAssistantUsage) : null;
@@ -830,7 +845,7 @@ export class ClaudeAcpAgent implements Agent {
                   update: {
                     sessionUpdate: "usage_update",
                     used: nextUsage,
-                    size: lastContextWindowSize,
+                    size: session.contextWindowSize,
                   },
                 });
               }
@@ -1396,6 +1411,14 @@ export class ClaudeAcpAgent implements Agent {
     if (configId === "mode") {
       session.modes = { ...session.modes, currentModeId: value };
     } else if (configId === "model") {
+      if (session.models.currentModelId !== value) {
+        // The cached context window was learned for the previous model; reset
+        // to the new model's heuristic so mid-stream updates between now and
+        // the next `result` reflect the user's selection instead of the old
+        // model's window.
+        session.contextWindowSize =
+          inferContextWindowFromModel(value) ?? DEFAULT_CONTEXT_WINDOW;
+      }
       session.models = { ...session.models, currentModelId: value };
     }
   }
@@ -1704,6 +1727,8 @@ export class ClaudeAcpAgent implements Agent {
       nextPendingOrder: 0,
       abortController,
       emitRawSDKMessages: sessionMeta?.claudeCode?.emitRawSDKMessages ?? false,
+      contextWindowSize:
+        inferContextWindowFromModel(models.currentModelId) ?? DEFAULT_CONTEXT_WINDOW,
     };
 
     return {
@@ -2371,6 +2396,16 @@ function commonPrefixLength(a: string, b: string) {
     i++;
   }
   return i;
+}
+
+/** Best-effort first guess of a model's context window from its ID, used only
+ *  until a `result` message arrives with the authoritative `modelUsage` value.
+ *  Anthropic 1M-context variants encode "1m" as a distinct token in the SDK
+ *  model ID (e.g., "claude-opus-4-6-1m"), which `\b1m\b` catches without also
+ *  matching things like "10m" or embedded substrings. */
+function inferContextWindowFromModel(model: string): number | null {
+  if (/\b1m\b/i.test(model)) return 1_000_000;
+  return null;
 }
 
 function getMatchingModelUsage(modelUsage: Record<string, ModelUsage>, currentModel: string) {
