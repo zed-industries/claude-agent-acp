@@ -1937,6 +1937,58 @@ describe("usage_update computation", () => {
     expect(usageUpdate.update.used).toBe(1800);
   });
 
+  it("coerces null input/output tokens so wire `used` is never null", async () => {
+    // Synthetic or third-party-backend stream events have been observed
+    // emitting input_tokens/output_tokens as null. Without coercion the
+    // snapshot leaks NaN into totalTokens(), and JSON.stringify(NaN) === "null"
+    // produces a malformed `used: null` that schema-validating ACP clients reject.
+    const { agent, updates } = createMockAgentWithCapture();
+    injectSession(agent, [
+      createAssistantMessage({
+        model: "claude-opus-4-20250514",
+        usage: {
+          input_tokens: null,
+          output_tokens: null,
+          cache_read_input_tokens: 200,
+          cache_creation_input_tokens: 100,
+        } as unknown as {
+          input_tokens: number;
+          output_tokens: number;
+          cache_read_input_tokens: number;
+          cache_creation_input_tokens: number;
+        },
+      }),
+      createResultMessageWithModel({
+        modelUsage: {
+          "claude-opus-4-20250514": {
+            inputTokens: 0,
+            outputTokens: 0,
+            cacheReadInputTokens: 200,
+            cacheCreationInputTokens: 100,
+            webSearchRequests: 0,
+            costUSD: 0.01,
+            contextWindow: 1000000,
+            maxOutputTokens: 16384,
+          },
+        },
+      }),
+      { type: "system", subtype: "session_state_changed", state: "idle" },
+    ]);
+
+    await agent.prompt({ sessionId: "test-session", prompt: [{ type: "text", text: "test" }] });
+
+    const usageUpdates = updates.filter((u: any) => u.update?.sessionUpdate === "usage_update");
+    expect(usageUpdates.length).toBeGreaterThan(0);
+    for (const u of usageUpdates) {
+      expect(u.update.used).not.toBeNull();
+      expect(Number.isFinite(u.update.used)).toBe(true);
+      // Round-trip through JSON to catch the NaN -> "null" serialization bug.
+      const wire = JSON.parse(JSON.stringify(u.update));
+      expect(wire.used).not.toBeNull();
+      expect(typeof wire.used).toBe("number");
+    }
+  });
+
   it("stream_event message_start emits usage_update before result", async () => {
     const { agent, updates } = createMockAgentWithCapture();
     injectSession(agent, [
