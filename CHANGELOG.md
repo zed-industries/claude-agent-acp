@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.29.2](https://github.com/agentclientprotocol/claude-agent-acp/compare/v0.29.1...v0.29.2) (2026-04-17)
+
+
+### Bug Fixes
+
+* Guard against null usage tokens ([#565](https://github.com/agentclientprotocol/claude-agent-acp/issues/565)) ([f7dc300](https://github.com/agentclientprotocol/claude-agent-acp/commit/f7dc300a165e70f6426f53920f12e24c04033cdc)), closes [#564](https://github.com/agentclientprotocol/claude-agent-acp/issues/564)
+
 ## [0.29.1](https://github.com/agentclientprotocol/claude-agent-acp/compare/v0.29.0...v0.29.1) (2026-04-17)
 
 
