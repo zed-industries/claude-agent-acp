@@ -3,7 +3,7 @@
   "publishConfig": {
     "access": "public"
   },
-  "version": "0.28.0",
+  "version": "0.29.1",
   "description": "An ACP-compatible coding agent powered by the Claude Agent SDK (TypeScript)",
   "main": "dist/lib.js",
   "types": "dist/lib.d.ts",
@@ -61,7 +61,7 @@
   "license": "Apache-2.0",
   "dependencies": {
     "@agentclientprotocol/sdk": "0.19.0",
-    "@anthropic-ai/claude-agent-sdk": "0.2.109",
+    "@anthropic-ai/claude-agent-sdk": "0.2.112",
     "zod": "^3.25.0 || ^4.0.0"
   },
   "devDependencies": {
@@ -75,7 +75,7 @@
     "globals": "17.5.0",
     "prettier": "3.8.3",
     "ts-node": "10.9.2",
-    "typescript": "6.0.2",
+    "typescript": "6.0.3",
     "vitest": "4.1.4"
   }
 }

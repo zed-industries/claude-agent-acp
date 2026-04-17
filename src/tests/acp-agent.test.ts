@@ -1350,6 +1350,7 @@ describe("stop reason propagation", () => {
       nextPendingOrder: 0,
       abortController: new AbortController(),
       emitRawSDKMessages: false,
+      contextWindowSize: 200000,
     };
   }
 
@@ -1491,6 +1492,7 @@ describe("stop reason propagation", () => {
       pendingMessages: new Map(),
       nextPendingOrder: 0,
       emitRawSDKMessages: false,
+      contextWindowSize: 200000,
     };
 
     const response = await agent.prompt({
@@ -1566,6 +1568,7 @@ describe("session/close", () => {
       nextPendingOrder: 0,
       abortController: new AbortController(),
       emitRawSDKMessages: false,
+      contextWindowSize: 200000,
     };
     return agent.sessions[sessionId]!;
   }
@@ -1660,6 +1663,7 @@ describe("getOrCreateSession param change detection", () => {
       nextPendingOrder: 0,
       abortController: new AbortController(),
       emitRawSDKMessages: false,
+      contextWindowSize: 200000,
     };
     return agent.sessions[sessionId]!;
   }
@@ -1819,6 +1823,23 @@ describe("usage_update computation", () => {
     };
   }
 
+  function createStreamEvent(
+    eventType: "message_start" | "message_delta",
+    payload: Record<string, unknown>,
+    parentToolUseId: string | null = null,
+  ) {
+    return {
+      type: "stream_event" as const,
+      parent_tool_use_id: parentToolUseId,
+      uuid: randomUUID(),
+      session_id: "test-session",
+      event:
+        eventType === "message_start"
+          ? { type: "message_start" as const, message: payload }
+          : { type: "message_delta" as const, ...payload },
+    };
+  }
+
   function createMockAgentWithCapture() {
     const updates: any[] = [];
     const mockClient = {
@@ -1875,6 +1896,7 @@ describe("usage_update computation", () => {
       nextPendingOrder: 0,
       abortController: new AbortController(),
       emitRawSDKMessages: false,
+      contextWindowSize: 200000,
     };
   }
 
@@ -1913,6 +1935,461 @@ describe("usage_update computation", () => {
     expect(usageUpdate).toBeDefined();
     // used = input(1000) + output(500) + cache_read(200) + cache_creation(100) = 1800
     expect(usageUpdate.update.used).toBe(1800);
+  });
+
+  it("stream_event message_start emits usage_update before result", async () => {
+    const { agent, updates } = createMockAgentWithCapture();
+    injectSession(agent, [
+      createStreamEvent("message_start", {
+        model: "claude-opus-4-20250514",
+        usage: {
+          input_tokens: 1000,
+          output_tokens: 500,
+          cache_read_input_tokens: 200,
+          cache_creation_input_tokens: 100,
+        },
+      }),
+      createResultMessageWithModel({
+        modelUsage: {
+          "claude-opus-4-20250514": {
+            inputTokens: 1000,
+            outputTokens: 500,
+            cacheReadInputTokens: 200,
+            cacheCreationInputTokens: 100,
+            webSearchRequests: 0,
+            costUSD: 0.01,
+            contextWindow: 1000000,
+            maxOutputTokens: 16384,
+          },
+        },
+      }),
+      { type: "system", subtype: "session_state_changed", state: "idle" },
+    ]);
+
+    await agent.prompt({ sessionId: "test-session", prompt: [{ type: "text", text: "test" }] });
+
+    const usageUpdates = updates.filter((u: any) => u.update?.sessionUpdate === "usage_update");
+    expect(usageUpdates).toHaveLength(2);
+    expect(usageUpdates[0].update.used).toBe(1800);
+    // First prompt of a session has no prior result to learn the window from,
+    // so the mid-stream update falls back to the default context window.
+    expect(usageUpdates[0].update.size).toBe(200000);
+    expect(usageUpdates[0].update.cost).toBeUndefined();
+    expect(usageUpdates[1].update.used).toBe(1800);
+    expect(usageUpdates[1].update.size).toBe(1000000);
+    expect(usageUpdates[1].update.cost).toBeDefined();
+  });
+
+  it("stream_event message_delta patches previous snapshot", async () => {
+    const { agent, updates } = createMockAgentWithCapture();
+    injectSession(agent, [
+      createStreamEvent("message_start", {
+        model: "claude-opus-4-20250514",
+        usage: {
+          input_tokens: 1000,
+          output_tokens: 0,
+          cache_read_input_tokens: 200,
+          cache_creation_input_tokens: 100,
+        },
+      }),
+      createStreamEvent("message_delta", {
+        usage: { output_tokens: 500 },
+      }),
+      createResultMessageWithModel({
+        modelUsage: {
+          "claude-opus-4-20250514": {
+            inputTokens: 1000,
+            outputTokens: 500,
+            cacheReadInputTokens: 200,
+            cacheCreationInputTokens: 100,
+            webSearchRequests: 0,
+            costUSD: 0.01,
+            contextWindow: 1000000,
+            maxOutputTokens: 16384,
+          },
+        },
+      }),
+      { type: "system", subtype: "session_state_changed", state: "idle" },
+    ]);
+
+    await agent.prompt({ sessionId: "test-session", prompt: [{ type: "text", text: "test" }] });
+
+    const usageUpdates = updates.filter((u: any) => u.update?.sessionUpdate === "usage_update");
+    expect(usageUpdates).toHaveLength(3);
+    expect(usageUpdates[0].update.used).toBe(1300);
+    expect(usageUpdates[0].update.cost).toBeUndefined();
+    expect(usageUpdates[1].update.used).toBe(1800);
+    expect(usageUpdates[1].update.cost).toBeUndefined();
+    expect(usageUpdates[2].update.used).toBe(1800);
+    expect(usageUpdates[2].update.cost).toBeDefined();
+  });
+
+  it("mid-stream size is inferred from a 1M model name before the first result", async () => {
+    // On the very first prompt there is no learned context window yet, so the
+    // mid-stream update would otherwise fall back to 200k. A "-1m" suffix in
+    // the SDK model ID is enough signal to emit 1_000_000 up front.
+    const { agent, updates } = createMockAgentWithCapture();
+    injectSession(agent, [
+      createStreamEvent("message_start", {
+        model: "claude-opus-4-6-1m",
+        usage: {
+          input_tokens: 2000,
+          output_tokens: 1000,
+          cache_read_input_tokens: 0,
+          cache_creation_input_tokens: 0,
+        },
+      }),
+      createResultMessageWithModel({
+        modelUsage: {
+          "claude-opus-4-6-1m": {
+            inputTokens: 2000,
+            outputTokens: 1000,
+            cacheReadInputTokens: 0,
+            cacheCreationInputTokens: 0,
+            webSearchRequests: 0,
+            costUSD: 0.02,
+            contextWindow: 1000000,
+            maxOutputTokens: 16384,
+          },
+        },
+      }),
+      { type: "system", subtype: "session_state_changed", state: "idle" },
+    ]);
+
+    await agent.prompt({ sessionId: "test-session", prompt: [{ type: "text", text: "test" }] });
+
+    const usageUpdates = updates.filter((u: any) => u.update?.sessionUpdate === "usage_update");
+    expect(usageUpdates).toHaveLength(2);
+    expect(usageUpdates[0].update.size).toBe(1000000);
+    expect(usageUpdates[1].update.size).toBe(1000000);
+  });
+
+  it("duplicate stream_event totals do not re-emit usage_update", async () => {
+    // A message_delta whose cumulative totals match the prior snapshot should
+    // not trigger a duplicate usage_update — only the result adds cost on top.
+    const { agent, updates } = createMockAgentWithCapture();
+    injectSession(agent, [
+      createStreamEvent("message_start", {
+        model: "claude-opus-4-20250514",
+        usage: {
+          input_tokens: 1000,
+          output_tokens: 500,
+          cache_read_input_tokens: 200,
+          cache_creation_input_tokens: 100,
+        },
+      }),
+      createStreamEvent("message_delta", {
+        usage: { output_tokens: 500 },
+      }),
+      createResultMessageWithModel({
+        modelUsage: {
+          "claude-opus-4-20250514": {
+            inputTokens: 1000,
+            outputTokens: 500,
+            cacheReadInputTokens: 200,
+            cacheCreationInputTokens: 100,
+            webSearchRequests: 0,
+            costUSD: 0.01,
+            contextWindow: 1000000,
+            maxOutputTokens: 16384,
+          },
+        },
+      }),
+      { type: "system", subtype: "session_state_changed", state: "idle" },
+    ]);
+
+    await agent.prompt({ sessionId: "test-session", prompt: [{ type: "text", text: "test" }] });
+
+    const usageUpdates = updates.filter((u: any) => u.update?.sessionUpdate === "usage_update");
+    expect(usageUpdates).toHaveLength(2);
+    expect(usageUpdates[0].update.used).toBe(1800);
+    expect(usageUpdates[0].update.cost).toBeUndefined();
+    expect(usageUpdates[1].update.used).toBe(1800);
+    expect(usageUpdates[1].update.cost).toBeDefined();
+  });
+
+  it("mid-stream size uses the session's learned context window", async () => {
+    // Session state persists the model's context window across prompts, so a
+    // mid-stream update in a later prompt reports the real size immediately
+    // instead of snapping back to the 200k default before the result arrives.
+    const { agent, updates } = createMockAgentWithCapture();
+    injectSession(agent, [
+      createStreamEvent("message_start", {
+        model: "claude-opus-4-20250514",
+        usage: {
+          input_tokens: 2000,
+          output_tokens: 1000,
+          cache_read_input_tokens: 0,
+          cache_creation_input_tokens: 0,
+        },
+      }),
+      createResultMessageWithModel({
+        modelUsage: {
+          "claude-opus-4-20250514": {
+            inputTokens: 2000,
+            outputTokens: 1000,
+            cacheReadInputTokens: 0,
+            cacheCreationInputTokens: 0,
+            webSearchRequests: 0,
+            costUSD: 0.02,
+            contextWindow: 1000000,
+            maxOutputTokens: 16384,
+          },
+        },
+      }),
+      { type: "system", subtype: "session_state_changed", state: "idle" },
+    ]);
+    // Simulate a prior prompt having learned the 1M window for this model.
+    agent.sessions["test-session"].contextWindowSize = 1000000;
+
+    await agent.prompt({ sessionId: "test-session", prompt: [{ type: "text", text: "test" }] });
+
+    const usageUpdates = updates.filter((u: any) => u.update?.sessionUpdate === "usage_update");
+    expect(usageUpdates).toHaveLength(2);
+    expect(usageUpdates[0].update.size).toBe(1000000);
+    expect(usageUpdates[1].update.size).toBe(1000000);
+  });
+
+  it("switching to a 1M model seeds the context window from the heuristic", async () => {
+    // The heuristic runs at config-change time so mid-stream updates in the
+    // next prompt already report 1M — without waiting for message_start or
+    // the next `result` to correct us.
+    const { agent, updates } = createMockAgentWithCapture();
+    injectSession(agent, [
+      createStreamEvent("message_start", {
+        model: "claude-opus-4-6-1m",
+        usage: {
+          input_tokens: 2000,
+          output_tokens: 1000,
+          cache_read_input_tokens: 0,
+          cache_creation_input_tokens: 0,
+        },
+      }),
+      createResultMessageWithModel({
+        modelUsage: {
+          "claude-opus-4-6-1m": {
+            inputTokens: 2000,
+            outputTokens: 1000,
+            cacheReadInputTokens: 0,
+            cacheCreationInputTokens: 0,
+            webSearchRequests: 0,
+            costUSD: 0.02,
+            contextWindow: 1000000,
+            maxOutputTokens: 16384,
+          },
+        },
+      }),
+      { type: "system", subtype: "session_state_changed", state: "idle" },
+    ]);
+    const session = agent.sessions["test-session"];
+    expect(session.contextWindowSize).toBe(200000);
+
+    (agent as any).syncSessionConfigState(session, "model", "claude-opus-4-6-1m");
+    expect(session.contextWindowSize).toBe(1000000);
+
+    await agent.prompt({ sessionId: "test-session", prompt: [{ type: "text", text: "test" }] });
+
+    const usageUpdates = updates.filter((u: any) => u.update?.sessionUpdate === "usage_update");
+    expect(usageUpdates).toHaveLength(2);
+    expect(usageUpdates[0].update.size).toBe(1000000);
+    expect(usageUpdates[1].update.size).toBe(1000000);
+  });
+
+  it("result with no matching modelUsage preserves the learned window", async () => {
+    // A turn whose `result.modelUsage` doesn't contain the current top-level
+    // model (e.g. no top-level assistant message, or only a subagent ran) must
+    // not clobber the window learned on a prior turn — otherwise the next
+    // prompt's mid-stream updates regress to the 200k default.
+    const { agent, updates } = createMockAgentWithCapture();
+    injectSession(agent, [
+      createResultMessageWithModel({
+        modelUsage: {
+          "claude-haiku-4-5-20251001": {
+            inputTokens: 100,
+            outputTokens: 50,
+            cacheReadInputTokens: 0,
+            cacheCreationInputTokens: 0,
+            webSearchRequests: 0,
+            costUSD: 0.001,
+            contextWindow: 200000,
+            maxOutputTokens: 8192,
+          },
+        },
+      }),
+      { type: "system", subtype: "session_state_changed", state: "idle" },
+    ]);
+    const session = agent.sessions["test-session"];
+    session.contextWindowSize = 1000000;
+
+    await agent.prompt({ sessionId: "test-session", prompt: [{ type: "text", text: "test" }] });
+
+    expect(session.contextWindowSize).toBe(1000000);
+    // The emit itself falls back to session.contextWindowSize, which is
+    // unchanged from the learned value.
+    const usageUpdates = updates.filter((u: any) => u.update?.sessionUpdate === "usage_update");
+    // No lastAssistantTotalUsage was set (no top-level assistant / stream
+    // event), so the result branch skips its emit entirely.
+    expect(usageUpdates).toHaveLength(0);
+  });
+
+  it("switching the session's model invalidates the learned context window", async () => {
+    // When the user switches models mid-session, the window learned for the
+    // previous model would otherwise persist into the next prompt's first
+    // mid-stream update. syncSessionConfigState should reset it so the next
+    // turn's first update falls back to the heuristic (here: 200k default).
+    const { agent, updates } = createMockAgentWithCapture();
+    injectSession(agent, [
+      createStreamEvent("message_start", {
+        model: "claude-sonnet-4-6",
+        usage: {
+          input_tokens: 1000,
+          output_tokens: 500,
+          cache_read_input_tokens: 0,
+          cache_creation_input_tokens: 0,
+        },
+      }),
+      createResultMessageWithModel({
+        modelUsage: {
+          "claude-sonnet-4-6": {
+            inputTokens: 1000,
+            outputTokens: 500,
+            cacheReadInputTokens: 0,
+            cacheCreationInputTokens: 0,
+            webSearchRequests: 0,
+            costUSD: 0.01,
+            contextWindow: 200000,
+            maxOutputTokens: 16384,
+          },
+        },
+      }),
+      { type: "system", subtype: "session_state_changed", state: "idle" },
+    ]);
+    const session = agent.sessions["test-session"];
+    session.contextWindowSize = 1000000;
+    session.models = { ...session.models, currentModelId: "claude-opus-4-6-1m" };
+
+    // User flips the selector to a 200k model.
+    (agent as any).syncSessionConfigState(session, "model", "claude-sonnet-4-6");
+
+    await agent.prompt({ sessionId: "test-session", prompt: [{ type: "text", text: "test" }] });
+
+    const usageUpdates = updates.filter((u: any) => u.update?.sessionUpdate === "usage_update");
+    expect(usageUpdates).toHaveLength(2);
+    expect(usageUpdates[0].update.size).toBe(200000);
+    expect(usageUpdates[1].update.size).toBe(200000);
+  });
+
+  it("non-usage stream events do not re-emit usage_update", async () => {
+    // content_block_* and message_stop carry no usage fields; they must not
+    // trigger duplicate emits between the real message_start / message_delta
+    // / result updates.
+    const { agent, updates } = createMockAgentWithCapture();
+    injectSession(agent, [
+      createStreamEvent("message_start", {
+        model: "claude-opus-4-20250514",
+        usage: {
+          input_tokens: 1000,
+          output_tokens: 0,
+          cache_read_input_tokens: 0,
+          cache_creation_input_tokens: 0,
+        },
+      }),
+      {
+        type: "stream_event" as const,
+        parent_tool_use_id: null,
+        uuid: randomUUID(),
+        session_id: "test-session",
+        event: { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } },
+      },
+      {
+        type: "stream_event" as const,
+        parent_tool_use_id: null,
+        uuid: randomUUID(),
+        session_id: "test-session",
+        event: { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "hi" } },
+      },
+      {
+        type: "stream_event" as const,
+        parent_tool_use_id: null,
+        uuid: randomUUID(),
+        session_id: "test-session",
+        event: { type: "content_block_stop", index: 0 },
+      },
+      createStreamEvent("message_delta", {
+        usage: { output_tokens: 200 },
+      }),
+      {
+        type: "stream_event" as const,
+        parent_tool_use_id: null,
+        uuid: randomUUID(),
+        session_id: "test-session",
+        event: { type: "message_stop" },
+      },
+      createResultMessageWithModel({
+        modelUsage: {
+          "claude-opus-4-20250514": {
+            inputTokens: 1000,
+            outputTokens: 200,
+            cacheReadInputTokens: 0,
+            cacheCreationInputTokens: 0,
+            webSearchRequests: 0,
+            costUSD: 0.01,
+            contextWindow: 1000000,
+            maxOutputTokens: 16384,
+          },
+        },
+      }),
+      { type: "system", subtype: "session_state_changed", state: "idle" },
+    ]);
+
+    await agent.prompt({ sessionId: "test-session", prompt: [{ type: "text", text: "test" }] });
+
+    const usageUpdates = updates.filter((u: any) => u.update?.sessionUpdate === "usage_update");
+    // Exactly three: message_start (1000), message_delta (1200), result (1200 + cost).
+    expect(usageUpdates).toHaveLength(3);
+    expect(usageUpdates[0].update.used).toBe(1000);
+    expect(usageUpdates[1].update.used).toBe(1200);
+    expect(usageUpdates[2].update.used).toBe(1200);
+    expect(usageUpdates[2].update.cost).toBeDefined();
+  });
+
+  it("subagent stream_event does not emit usage_update", async () => {
+    const { agent, updates } = createMockAgentWithCapture();
+    injectSession(agent, [
+      createStreamEvent(
+        "message_start",
+        {
+          model: "claude-haiku-4-5-20251001",
+          usage: {
+            input_tokens: 500,
+            output_tokens: 100,
+            cache_read_input_tokens: 0,
+            cache_creation_input_tokens: 0,
+          },
+        },
+        "tool_use_123",
+      ),
+      createResultMessageWithModel({
+        modelUsage: {
+          "claude-haiku-4-5-20251001": {
+            inputTokens: 500,
+            outputTokens: 100,
+            cacheReadInputTokens: 0,
+            cacheCreationInputTokens: 0,
+            webSearchRequests: 0,
+            costUSD: 0.001,
+            contextWindow: 200000,
+            maxOutputTokens: 8192,
+          },
+        },
+      }),
+      { type: "system", subtype: "session_state_changed", state: "idle" },
+    ]);
+
+    await agent.prompt({ sessionId: "test-session", prompt: [{ type: "text", text: "test" }] });
+
+    const usageUpdates = updates.filter((u: any) => u.update?.sessionUpdate === "usage_update");
+    expect(usageUpdates).toHaveLength(0);
   });
 
   it("size reflects the current model's context window, not min across all", async () => {
@@ -2255,6 +2732,7 @@ describe("emitRawSDKMessages", () => {
       nextPendingOrder: 0,
       abortController: new AbortController(),
       emitRawSDKMessages,
+      contextWindowSize: 200000,
     };
   }
 

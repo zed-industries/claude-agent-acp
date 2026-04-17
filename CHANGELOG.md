@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.29.1](https://github.com/agentclientprotocol/claude-agent-acp/compare/v0.29.0...v0.29.1) (2026-04-17)
+
+
+### Bug Fixes
+
+* emit usage updates from Claude stream events ([#506](https://github.com/agentclientprotocol/claude-agent-acp/issues/506)) ([dd67450](https://github.com/agentclientprotocol/claude-agent-acp/commit/dd67450fd9bddc82db3e71273b535e07b2672804))
+* Remove dot from auto mode description ([#561](https://github.com/agentclientprotocol/claude-agent-acp/issues/561)) ([2ecfa83](https://github.com/agentclientprotocol/claude-agent-acp/commit/2ecfa83b26db58deaded210463fa6ff21d0dff70))
+* Update to claude-agent-sdk 0.2.112 to fix Auto bug with Opus 4.7 ([#562](https://github.com/agentclientprotocol/claude-agent-acp/issues/562)) ([079614a](https://github.com/agentclientprotocol/claude-agent-acp/commit/079614ab05afba17e2cce0d3d238df7b90e17389))
+
+## [0.29.0](https://github.com/agentclientprotocol/claude-agent-acp/compare/v0.28.0...v0.29.0) (2026-04-16)
+
+
+### Features
+
+* Update to claude-agent-sdk 0.2.111 (Opus 4.7) ([#557](https://github.com/agentclientprotocol/claude-agent-acp/issues/557)) ([85cd70c](https://github.com/agentclientprotocol/claude-agent-acp/commit/85cd70c9f3be47c9c404958547c4046d866db1c9))
+
 ## [0.28.0](https://github.com/agentclientprotocol/claude-agent-acp/compare/v0.27.0...v0.28.0) (2026-04-15)
 
 
