@@ -126,7 +126,9 @@ const DEFAULT_CONTEXT_WINDOW = 200000;
 type Session = {
   query: Query;
   input: Pushable<SDKUserMessage>;
-  cancelled: boolean;
+  /** Bumped by cancel(); prompt() captures the value at entry so a later
+   *  prompt() call cannot clobber the cancellation signal. */
+  cancelGeneration: number;
   cwd: string;
   /** Serialized snapshot of session-defining params (cwd, mcpServers) used to
    *  detect when loadSession/resumeSession is called with changed values. */
@@ -557,7 +559,9 @@ export class ClaudeAcpAgent implements Agent {
       throw new Error("Session not found");
     }
 
-    session.cancelled = false;
+    const cancelGeneration = session.cancelGeneration;
+    const isCancelled = () => session.cancelGeneration !== cancelGeneration;
+
     session.accumulatedUsage = {
       inputTokens: 0,
       outputTokens: 0,
@@ -603,7 +607,7 @@ export class ClaudeAcpAgent implements Agent {
         const { value: message, done } = await session.query.next();
 
         if (done || !message) {
-          if (session.cancelled) {
+          if (isCancelled()) {
             return { stopReason: "cancelled" };
           }
           break;
@@ -737,7 +741,7 @@ export class ClaudeAcpAgent implements Agent {
               });
             }
 
-            if (session.cancelled) {
+            if (isCancelled()) {
               stopReason = "cancelled";
               break;
             }
@@ -870,7 +874,7 @@ export class ClaudeAcpAgent implements Agent {
           }
           case "user":
           case "assistant": {
-            if (session.cancelled) {
+            if (isCancelled()) {
               break;
             }
 
@@ -1029,7 +1033,7 @@ export class ClaudeAcpAgent implements Agent {
     if (!session) {
       return;
     }
-    session.cancelled = true;
+    session.cancelGeneration++;
     for (const [, pending] of session.pendingMessages) {
       pending.resolve(true);
     }
@@ -1696,7 +1700,7 @@ export class ClaudeAcpAgent implements Agent {
     this.sessions[sessionId] = {
       query: q,
       input: input,
-      cancelled: false,
+      cancelGeneration: 0,
       cwd: params.cwd,
       sessionFingerprint: computeSessionFingerprint(params),
       settingsManager,
