@@ -1654,7 +1654,7 @@ export class ClaudeAcpAgent implements Agent {
       {
         id: "auto",
         name: "Auto",
-        description: "Use a model classifier to approve/deny permission prompts.",
+        description: "Use a model classifier to approve/deny permission prompts",
       },
       {
         id: "default",
